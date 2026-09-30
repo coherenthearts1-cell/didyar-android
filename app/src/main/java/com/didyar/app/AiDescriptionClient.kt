@@ -3,83 +3,177 @@ package com.didyar.app
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class AiServiceConfig(
-    val endpoint: String,
-    val accessToken: String
-)
+object AvalAiVisionProvider {
+    const val MODEL = "gemini-3.8-flash"
 
-object AiDescriptionClient {
+    private val endpoints = listOf(
+        "https://api.avalai.ir/v1/chat/completions",
+        "https://api.avalapis.ir/v1/chat/completions",
+        "https://api.avalai.org/v1/chat/completions"
+    )
+
+    fun testConnection(apiKey: String): String {
+        val payload = JSONObject().apply {
+            put("model", MODEL)
+            put("messages", JSONArray().put(
+                JSONObject().apply {
+                    put("role", "user")
+                    put("content", "فقط کلمهٔ آماده را بنویس.")
+                }
+            ))
+            put("max_tokens", 8)
+            put("temperature", 0)
+        }
+        return requestWithFallback(apiKey, payload)
+    }
+
     fun describeScene(
-        config: AiServiceConfig,
+        apiKey: String,
         framesBase64: List<String>,
         sceneIndex: Int,
         sceneTotal: Int,
         timecode: String
     ): String {
-        require(config.endpoint.startsWith("https://")) {
-            "نشانی سرویس باید با https:// شروع شود."
-        }
-        require(framesBase64.isNotEmpty()) {
-            "از این صحنه تصویری برای ارسال پیدا نشد."
+        require(apiKey.isNotBlank()) { "کلید API وارد نشده است." }
+        require(framesBase64.isNotEmpty()) { "از این صحنه تصویری برای ارسال پیدا نشد." }
+
+        val prompt = """
+            تو نویسندهٔ توضیح صوتی فارسی برای مخاطب نابینا هستی.
+            تصاویر ورودی چند فریم متوالی از یک صحنهٔ فیلم هستند.
+            در یک یا دو جملهٔ کوتاه و روان فقط اطلاعات دیداری مهمی را بگو که احتمالاً از صدای فیلم فهمیده نمی‌شود.
+            روی حرکت، ورود و خروج افراد، حالت کلی بدن، مکان، اشیای مهم، نوشتهٔ مهم روی تصویر و تغییر بصری اصلی تمرکز کن.
+            هویت یا نام افراد را حدس نزن. دربارهٔ نیت یا احساسات قطعی حدس نزن و چیزی را که در تصاویر روشن نیست نساز.
+            دیالوگ‌ها و صداهای قابل شنیدن را بازگو نکن.
+            از عبارت‌هایی مثل «در تصویر می‌بینیم» استفاده نکن؛ مستقیم و طبیعی توصیف کن.
+            خروجی فقط خود توضیح فارسی باشد، بدون عنوان، شماره‌گذاری یا توضیح اضافه.
+            این صحنه شماره $sceneIndex از $sceneTotal و حوالی زمان $timecode است.
+        """.trimIndent()
+
+        val content = JSONArray().put(
+            JSONObject().apply {
+                put("type", "text")
+                put("text", prompt)
+            }
+        )
+
+        framesBase64.take(3).forEach { frame ->
+            content.put(
+                JSONObject().apply {
+                    put("type", "image_url")
+                    put(
+                        "image_url",
+                        JSONObject().apply {
+                            put("url", "data:image/jpeg;base64,$frame")
+                            put("detail", "low")
+                        }
+                    )
+                }
+            )
         }
 
-        val body = JSONObject().apply {
-            put("scene_index", sceneIndex)
-            put("scene_total", sceneTotal)
-            put("timecode", timecode)
-            put("frames", JSONArray(framesBase64))
+        val payload = JSONObject().apply {
+            put("model", MODEL)
+            put(
+                "messages",
+                JSONArray().put(
+                    JSONObject().apply {
+                        put("role", "user")
+                        put("content", content)
+                    }
+                )
+            )
+            put("max_tokens", 180)
+            put("temperature", 0.2)
         }
 
-        val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
+        return requestWithFallback(apiKey, payload)
+    }
+
+    private fun requestWithFallback(apiKey: String, payload: JSONObject): String {
+        var lastError: Exception? = null
+
+        endpoints.forEach { endpoint ->
+            try {
+                return request(endpoint, apiKey, payload)
+            } catch (e: IOException) {
+                lastError = e
+            }
+        }
+
+        throw lastError ?: IllegalStateException("ارتباط با سرویس AvalAI برقرار نشد.")
+    }
+
+    private fun request(endpoint: String, apiKey: String, payload: JSONObject): String {
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 30_000
+            connectTimeout = 25_000
             readTimeout = 90_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
-            if (config.accessToken.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer ${config.accessToken.trim()}")
-            }
+            setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
         }
 
         try {
             connection.outputStream.use { output ->
-                output.write(body.toString().toByteArray(Charsets.UTF_8))
+                output.write(payload.toString().toByteArray(Charsets.UTF_8))
             }
 
             val status = connection.responseCode
-            val stream = if (status in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            }
-
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val responseText = stream?.bufferedReader(Charsets.UTF_8)
                 ?.use(BufferedReader::readText)
                 .orEmpty()
 
             if (status !in 200..299) {
                 val message = runCatching {
-                    JSONObject(responseText).optString("error")
+                    val root = JSONObject(responseText)
+                    when (val error = root.opt("error")) {
+                        is JSONObject -> error.optString("message").ifBlank {
+                            error.optString("code")
+                        }
+                        is String -> error
+                        else -> ""
+                    }
                 }.getOrNull().orEmpty()
+
                 throw IllegalStateException(
                     if (message.isNotBlank()) message
-                    else "سرویس هوش مصنوعی خطای $status برگرداند."
+                    else "AvalAI خطای $status برگرداند."
                 )
             }
 
-            val description = JSONObject(responseText)
-                .optString("description")
-                .trim()
-
-            if (description.isBlank()) {
-                throw IllegalStateException("سرویس توضیح خالی برگرداند.")
+            val root = JSONObject(responseText)
+            val choices = root.optJSONArray("choices")
+                ?: throw IllegalStateException("پاسخ AvalAI ساختار مورد انتظار را ندارد.")
+            if (choices.length() == 0) {
+                throw IllegalStateException("AvalAI پاسخی برنگرداند.")
             }
 
-            return description
+            val message = choices.getJSONObject(0).getJSONObject("message")
+            val content = message.opt("content")
+
+            val text = when (content) {
+                is String -> content
+                is JSONArray -> buildString {
+                    for (i in 0 until content.length()) {
+                        val item = content.optJSONObject(i) ?: continue
+                        val t = item.optString("text")
+                        if (t.isNotBlank()) append(t)
+                    }
+                }
+                else -> ""
+            }.trim()
+
+            if (text.isBlank()) {
+                throw IllegalStateException("متن توضیح از AvalAI دریافت نشد.")
+            }
+
+            return text
         } finally {
             connection.disconnect()
         }
