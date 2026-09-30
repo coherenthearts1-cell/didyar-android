@@ -1,5 +1,6 @@
 package com.didyar.app
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -40,6 +42,8 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
@@ -71,6 +75,9 @@ private fun DidyarScreen() {
     val player = remember { ExoPlayer.Builder(context).build() }
     val tts = remember { PersianTts(context) }
     val scrollState = rememberScrollState()
+    val prefs = remember {
+        context.getSharedPreferences("didyar_ai", Context.MODE_PRIVATE)
+    }
 
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("هنوز فیلمی انتخاب نشده است") }
@@ -84,6 +91,15 @@ private fun DidyarScreen() {
     val scenes = remember { mutableStateListOf<ScenePoint>() }
     var selectedSceneIndex by remember { mutableIntStateOf(-1) }
     var descriptionDraft by remember { mutableStateOf("") }
+
+    var aiEndpoint by remember {
+        mutableStateOf(prefs.getString("endpoint", "").orEmpty())
+    }
+    var aiToken by remember {
+        mutableStateOf(prefs.getString("token", "").orEmpty())
+    }
+    var showAiSettings by remember { mutableStateOf(aiEndpoint.isBlank() || aiToken.isBlank()) }
+    var aiBusy by remember { mutableStateOf(false) }
 
     fun selectScene(index: Int) {
         if (index !in scenes.indices) return
@@ -163,7 +179,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۱٫۱",
+            text = "دیدیار ۰٫۲",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -264,10 +280,70 @@ private fun DidyarScreen() {
                     }
                 }
             },
-            enabled = selectedUri != null && !analyzing,
+            enabled = selectedUri != null && !analyzing && !aiBusy,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(if (analyzing) "در حال تحلیل؛ $analysisProgress درصد" else "تحلیل ۵ دقیقهٔ اول")
+        }
+
+        Button(
+            onClick = { showAiSettings = !showAiSettings },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (showAiSettings) "بستن تنظیمات هوش مصنوعی" else "تنظیمات هوش مصنوعی")
+        }
+
+        if (showAiSettings) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "تنظیمات سرویس توضیح خودکار",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    Text(
+                        "کلید OpenAI داخل برنامه وارد نمی‌شود. این قسمت فقط نشانی بک‌اند دیدیار و رمز دسترسی همان بک‌اند را نگه می‌دارد."
+                    )
+
+                    OutlinedTextField(
+                        value = aiEndpoint,
+                        onValueChange = { aiEndpoint = it },
+                        label = { Text("نشانی سرویس AI") },
+                        placeholder = { Text("https://.../api/describe") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = aiToken,
+                        onValueChange = { aiToken = it },
+                        label = { Text("رمز دسترسی سرویس") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = {
+                            prefs.edit()
+                                .putString("endpoint", aiEndpoint.trim())
+                                .putString("token", aiToken.trim())
+                                .apply()
+                            status = "تنظیمات سرویس هوش مصنوعی ذخیره شد."
+                            showAiSettings = false
+                        },
+                        enabled = aiEndpoint.startsWith("https://") && aiToken.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("ذخیره تنظیمات AI")
+                    }
+                }
+            }
         }
 
         if (scenes.isNotEmpty()) {
@@ -294,7 +370,7 @@ private fun DidyarScreen() {
                     ) {
                         Button(
                             onClick = { selectScene(selectedSceneIndex - 1) },
-                            enabled = selectedSceneIndex > 0,
+                            enabled = selectedSceneIndex > 0 && !aiBusy,
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("صحنه قبلی")
@@ -302,7 +378,7 @@ private fun DidyarScreen() {
 
                         Button(
                             onClick = { selectScene(selectedSceneIndex + 1) },
-                            enabled = selectedSceneIndex < scenes.lastIndex,
+                            enabled = selectedSceneIndex < scenes.lastIndex && !aiBusy,
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("صحنه بعدی")
@@ -315,9 +391,72 @@ private fun DidyarScreen() {
                             player.play()
                             status = "پخش از صحنه ${currentScene.index}."
                         },
+                        enabled = !aiBusy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("پخش از این صحنه")
+                    }
+
+                    Button(
+                        onClick = {
+                            val uri = selectedUri ?: return@Button
+                            val index = selectedSceneIndex
+                            if (index !in scenes.indices) return@Button
+
+                            val scene = scenes[index]
+                            val nextSceneStart = scenes.getOrNull(index + 1)?.timeMs ?: durationMs
+                            val config = AiServiceConfig(
+                                endpoint = aiEndpoint.trim(),
+                                accessToken = aiToken.trim()
+                            )
+
+                            aiBusy = true
+                            status = "در حال ساخت توضیح خودکار برای صحنه ${scene.index}."
+
+                            scope.launch {
+                                try {
+                                    val description = withContext(Dispatchers.IO) {
+                                        val frames = SceneFrameExtractor.extractBase64Jpegs(
+                                            context = context,
+                                            uri = uri,
+                                            startMs = scene.timeMs,
+                                            endMs = nextSceneStart
+                                        )
+                                        AiDescriptionClient.describeScene(
+                                            config = config,
+                                            framesBase64 = frames,
+                                            sceneIndex = scene.index,
+                                            sceneTotal = scenes.size,
+                                            timecode = formatTime(scene.timeMs)
+                                        )
+                                    }
+
+                                    if (index in scenes.indices) {
+                                        scenes[index] = scenes[index].copy(description = description)
+                                        descriptionDraft = description
+                                    }
+                                    status = "توضیح خودکار صحنه ${scene.index} آماده شد."
+                                } catch (e: Exception) {
+                                    status = "ساخت توضیح خودکار ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                } finally {
+                                    aiBusy = false
+                                }
+                            }
+                        },
+                        enabled = !aiBusy &&
+                            selectedUri != null &&
+                            aiEndpoint.startsWith("https://") &&
+                            aiToken.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (aiBusy) "در حال ساخت توضیح..."
+                            else "ساخت توضیح خودکار این صحنه"
+                        )
+                    }
+
+                    if (aiEndpoint.isBlank() || aiToken.isBlank()) {
+                        Text("برای فعال شدن توضیح خودکار، ابتدا تنظیمات هوش مصنوعی را وارد کنید.")
                     }
 
                     OutlinedTextField(
@@ -335,6 +474,7 @@ private fun DidyarScreen() {
                             )
                             status = "توضیح صحنه ${currentScene.index} ذخیره شد."
                         },
+                        enabled = !aiBusy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("ذخیره توضیح")
@@ -349,7 +489,7 @@ private fun DidyarScreen() {
                                 "برای پخش، ابتدا یک توضیح بنویسید یا موتور گفتار گوشی هنوز آماده نیست."
                             }
                         },
-                        enabled = descriptionDraft.isNotBlank(),
+                        enabled = descriptionDraft.isNotBlank() && !aiBusy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("شنیدن توضیح")
