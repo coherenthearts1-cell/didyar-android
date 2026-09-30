@@ -1,6 +1,5 @@
 package com.didyar.app
 
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -75,9 +74,6 @@ private fun DidyarScreen() {
     val player = remember { ExoPlayer.Builder(context).build() }
     val tts = remember { PersianTts(context) }
     val scrollState = rememberScrollState()
-    val prefs = remember {
-        context.getSharedPreferences("didyar_ai", Context.MODE_PRIVATE)
-    }
 
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("هنوز فیلمی انتخاب نشده است") }
@@ -92,13 +88,10 @@ private fun DidyarScreen() {
     var selectedSceneIndex by remember { mutableIntStateOf(-1) }
     var descriptionDraft by remember { mutableStateOf("") }
 
-    var aiEndpoint by remember {
-        mutableStateOf(prefs.getString("endpoint", "").orEmpty())
+    var apiKey by remember {
+        mutableStateOf(SecureSecretStore.load(context, "avalai_api_key").orEmpty())
     }
-    var aiToken by remember {
-        mutableStateOf(prefs.getString("token", "").orEmpty())
-    }
-    var showAiSettings by remember { mutableStateOf(aiEndpoint.isBlank() || aiToken.isBlank()) }
+    var showAiSettings by remember { mutableStateOf(apiKey.isBlank()) }
     var aiBusy by remember { mutableStateOf(false) }
 
     fun selectScene(index: Int) {
@@ -179,7 +172,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۲",
+            text = "دیدیار ۰٫۳",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -226,7 +219,7 @@ private fun DidyarScreen() {
                     player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
                     status = "ده ثانیه عقب رفت."
                 },
-                enabled = selectedUri != null,
+                enabled = selectedUri != null && !aiBusy,
                 modifier = Modifier.weight(1f)
             ) { Text("۱۰ ثانیه عقب") }
 
@@ -234,7 +227,7 @@ private fun DidyarScreen() {
                 onClick = {
                     if (player.isPlaying) player.pause() else player.play()
                 },
-                enabled = selectedUri != null,
+                enabled = selectedUri != null && !aiBusy,
                 modifier = Modifier.weight(1f)
             ) { Text(if (isPlaying) "مکث" else "پخش") }
 
@@ -244,7 +237,7 @@ private fun DidyarScreen() {
                     player.seekTo((player.currentPosition + 10_000L).coerceAtMost(max))
                     status = "ده ثانیه جلو رفت."
                 },
-                enabled = selectedUri != null,
+                enabled = selectedUri != null && !aiBusy,
                 modifier = Modifier.weight(1f)
             ) { Text("۱۰ ثانیه جلو") }
         }
@@ -300,28 +293,19 @@ private fun DidyarScreen() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        "تنظیمات سرویس توضیح خودکار",
+                        "موتور توضیح خودکار",
                         style = MaterialTheme.typography.titleMedium
                     )
 
+                    Text("AvalAI — مدل Gemini 3.8 Flash")
                     Text(
-                        "کلید OpenAI داخل برنامه وارد نمی‌شود. این قسمت فقط نشانی بک‌اند دیدیار و رمز دسترسی همان بک‌اند را نگه می‌دارد."
+                        "کلید AvalAI داخل فایل برنامه قرار نمی‌گیرد. کلیدی که اینجا وارد می‌کنید با Android Keystore روی همین گوشی رمزگذاری می‌شود."
                     )
 
                     OutlinedTextField(
-                        value = aiEndpoint,
-                        onValueChange = { aiEndpoint = it },
-                        label = { Text("نشانی سرویس AI") },
-                        placeholder = { Text("https://.../api/describe") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = aiToken,
-                        onValueChange = { aiToken = it },
-                        label = { Text("رمز دسترسی سرویس") },
+                        value = apiKey,
+                        onValueChange = { apiKey = it.trim() },
+                        label = { Text("کلید API AvalAI") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -330,17 +314,51 @@ private fun DidyarScreen() {
 
                     Button(
                         onClick = {
-                            prefs.edit()
-                                .putString("endpoint", aiEndpoint.trim())
-                                .putString("token", aiToken.trim())
-                                .apply()
-                            status = "تنظیمات سرویس هوش مصنوعی ذخیره شد."
-                            showAiSettings = false
+                            SecureSecretStore.save(context, "avalai_api_key", apiKey.trim())
+                            status = "کلید AvalAI به‌صورت رمزگذاری‌شده روی گوشی ذخیره شد."
                         },
-                        enabled = aiEndpoint.startsWith("https://") && aiToken.isNotBlank(),
+                        enabled = apiKey.isNotBlank() && !aiBusy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("ذخیره تنظیمات AI")
+                        Text("ذخیره کلید")
+                    }
+
+                    Button(
+                        onClick = {
+                            val key = apiKey.trim()
+                            if (key.isBlank()) return@Button
+                            aiBusy = true
+                            status = "در حال آزمایش اتصال به AvalAI."
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        AvalAiVisionProvider.testConnection(key)
+                                    }
+                                    SecureSecretStore.save(context, "avalai_api_key", key)
+                                    status = "اتصال به AvalAI برقرار شد و کلید معتبر است."
+                                } catch (e: Exception) {
+                                    status = "آزمایش اتصال ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                } finally {
+                                    aiBusy = false
+                                }
+                            }
+                        },
+                        enabled = apiKey.isNotBlank() && !aiBusy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (aiBusy) "در حال آزمایش..." else "آزمایش اتصال AvalAI")
+                    }
+
+                    Button(
+                        onClick = {
+                            SecureSecretStore.clear(context, "avalai_api_key")
+                            apiKey = ""
+                            status = "کلید AvalAI از گوشی پاک شد."
+                        },
+                        enabled = apiKey.isNotBlank() && !aiBusy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("پاک کردن کلید")
                     }
                 }
             }
@@ -400,15 +418,12 @@ private fun DidyarScreen() {
                     Button(
                         onClick = {
                             val uri = selectedUri ?: return@Button
+                            val key = apiKey.trim()
                             val index = selectedSceneIndex
-                            if (index !in scenes.indices) return@Button
+                            if (key.isBlank() || index !in scenes.indices) return@Button
 
                             val scene = scenes[index]
                             val nextSceneStart = scenes.getOrNull(index + 1)?.timeMs ?: durationMs
-                            val config = AiServiceConfig(
-                                endpoint = aiEndpoint.trim(),
-                                accessToken = aiToken.trim()
-                            )
 
                             aiBusy = true
                             status = "در حال ساخت توضیح خودکار برای صحنه ${scene.index}."
@@ -422,8 +437,8 @@ private fun DidyarScreen() {
                                             startMs = scene.timeMs,
                                             endMs = nextSceneStart
                                         )
-                                        AiDescriptionClient.describeScene(
-                                            config = config,
+                                        AvalAiVisionProvider.describeScene(
+                                            apiKey = key,
                                             framesBase64 = frames,
                                             sceneIndex = scene.index,
                                             sceneTotal = scenes.size,
@@ -443,10 +458,7 @@ private fun DidyarScreen() {
                                 }
                             }
                         },
-                        enabled = !aiBusy &&
-                            selectedUri != null &&
-                            aiEndpoint.startsWith("https://") &&
-                            aiToken.isNotBlank(),
+                        enabled = !aiBusy && selectedUri != null && apiKey.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -455,8 +467,8 @@ private fun DidyarScreen() {
                         )
                     }
 
-                    if (aiEndpoint.isBlank() || aiToken.isBlank()) {
-                        Text("برای فعال شدن توضیح خودکار، ابتدا تنظیمات هوش مصنوعی را وارد کنید.")
+                    if (apiKey.isBlank()) {
+                        Text("برای فعال شدن توضیح خودکار، ابتدا در تنظیمات هوش مصنوعی کلید AvalAI را وارد کنید.")
                     }
 
                     OutlinedTextField(
