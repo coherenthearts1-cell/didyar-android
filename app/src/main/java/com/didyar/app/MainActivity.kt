@@ -11,13 +11,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +70,7 @@ private fun DidyarScreen() {
     val scope = rememberCoroutineScope()
     val player = remember { ExoPlayer.Builder(context).build() }
     val tts = remember { PersianTts(context) }
+    val scrollState = rememberScrollState()
 
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("هنوز فیلمی انتخاب نشده است") }
@@ -84,6 +84,14 @@ private fun DidyarScreen() {
     val scenes = remember { mutableStateListOf<ScenePoint>() }
     var selectedSceneIndex by remember { mutableIntStateOf(-1) }
     var descriptionDraft by remember { mutableStateOf("") }
+
+    fun selectScene(index: Int) {
+        if (index !in scenes.indices) return
+        selectedSceneIndex = index
+        val scene = scenes[index]
+        descriptionDraft = scene.description
+        status = "صحنه ${scene.index} از ${scenes.size} انتخاب شد؛ زمان ${formatTime(scene.timeMs)}."
+    }
 
     val openDocument = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -150,11 +158,12 @@ private fun DidyarScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۱",
+            text = "دیدیار ۰٫۱٫۱",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -189,7 +198,7 @@ private fun DidyarScreen() {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp)
-                .semantics { contentDescription = "تصویر فیلم؛ کنترل‌ها در پایین قرار دارند" }
+                .semantics { contentDescription = "تصویر فیلم؛ کنترل‌های پخش در پایین قرار دارند" }
         )
 
         Row(
@@ -241,8 +250,12 @@ private fun DidyarScreen() {
                         }
                         scenes.clear()
                         scenes.addAll(result)
-                        selectedSceneIndex = if (scenes.isNotEmpty()) 0 else -1
-                        descriptionDraft = scenes.firstOrNull()?.description.orEmpty()
+                        if (scenes.isNotEmpty()) {
+                            selectScene(0)
+                        } else {
+                            selectedSceneIndex = -1
+                            descriptionDraft = ""
+                        }
                         status = "تحلیل تمام شد. ${scenes.size} نقطهٔ احتمالی صحنه پیدا شد."
                     } catch (e: Exception) {
                         status = "تحلیل ناموفق بود: ${e.message ?: "خطای نامشخص"}"
@@ -259,42 +272,53 @@ private fun DidyarScreen() {
 
         if (scenes.isNotEmpty()) {
             Text(
-                text = "صحنه‌ها؛ ${scenes.size} مورد",
+                text = "صحنه‌ها: ${scenes.size} مورد",
                 style = MaterialTheme.typography.titleMedium
             )
 
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = true),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                itemsIndexed(scenes, key = { _, item -> item.index }) { index, scene ->
-                    val state = if (scene.description.isBlank()) "بدون توضیح" else "دارای توضیح"
-                    Button(
-                        onClick = {
-                            selectedSceneIndex = index
-                            descriptionDraft = scene.description
-                            status = "صحنه ${scene.index} انتخاب شد؛ زمان ${formatTime(scene.timeMs)}."
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("صحنه ${scene.index}، ${formatTime(scene.timeMs)}، $state")
-                    }
-                }
-            }
-        } else {
-            Spacer(modifier = Modifier.height(4.dp))
-        }
+            val currentScene = scenes[selectedSceneIndex.coerceIn(0, scenes.lastIndex)]
 
-        if (selectedSceneIndex in scenes.indices) {
-            val selectedScene = scenes[selectedSceneIndex]
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("صحنه ${selectedScene.index}، زمان ${formatTime(selectedScene.timeMs)}")
+                    Text(
+                        text = "صحنه ${currentScene.index} از ${scenes.size}، زمان ${formatTime(currentScene.timeMs)}",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { selectScene(selectedSceneIndex - 1) },
+                            enabled = selectedSceneIndex > 0,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("صحنه قبلی")
+                        }
+
+                        Button(
+                            onClick = { selectScene(selectedSceneIndex + 1) },
+                            enabled = selectedSceneIndex < scenes.lastIndex,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("صحنه بعدی")
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            player.seekTo(currentScene.timeMs)
+                            player.play()
+                            status = "پخش از صحنه ${currentScene.index}."
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("پخش از این صحنه")
+                    }
 
                     OutlinedTextField(
                         value = descriptionDraft,
@@ -304,28 +328,16 @@ private fun DidyarScreen() {
                         minLines = 2
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Button(
+                        onClick = {
+                            scenes[selectedSceneIndex] = currentScene.copy(
+                                description = descriptionDraft.trim()
+                            )
+                            status = "توضیح صحنه ${currentScene.index} ذخیره شد."
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Button(
-                            onClick = {
-                                scenes[selectedSceneIndex] = selectedScene.copy(
-                                    description = descriptionDraft.trim()
-                                )
-                                status = "توضیح صحنه ${selectedScene.index} ذخیره شد."
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("ذخیره توضیح") }
-
-                        Button(
-                            onClick = {
-                                player.seekTo(selectedScene.timeMs)
-                                player.play()
-                                status = "پخش از صحنه ${selectedScene.index}."
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("پخش این صحنه") }
+                        Text("ذخیره توضیح")
                     }
 
                     Button(
