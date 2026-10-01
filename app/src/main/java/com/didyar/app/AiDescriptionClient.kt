@@ -16,6 +16,16 @@ object AvalAiVisionProvider {
         "https://api.avalai.org/v1/chat/completions"
     )
 
+    private class EmptyOutputException(
+        val finishReason: String?
+    ) : IllegalStateException(
+        if (finishReason == "length") {
+            "مدل به سقف خروجی رسید و متن نهایی تولید نشد."
+        } else {
+            "متن توضیح از AvalAI دریافت نشد."
+        }
+    )
+
     fun testConnection(apiKey: String): String {
         val payload = JSONObject().apply {
             put("model", MODEL)
@@ -25,7 +35,8 @@ object AvalAiVisionProvider {
                     put("content", "فقط کلمهٔ آماده را بنویس.")
                 }
             ))
-            put("max_tokens", 8)
+            put("max_tokens", 96)
+            put("reasoning_effort", "none")
             put("temperature", 0)
         }
         return requestWithFallback(apiKey, payload)
@@ -86,7 +97,8 @@ object AvalAiVisionProvider {
                     }
                 )
             )
-            put("max_tokens", 180)
+            put("max_tokens", 320)
+            put("reasoning_effort", "none")
             put("temperature", 0.2)
         }
 
@@ -94,17 +106,33 @@ object AvalAiVisionProvider {
     }
 
     private fun requestWithFallback(apiKey: String, payload: JSONObject): String {
-        var lastError: Exception? = null
+        var lastNetworkError: Exception? = null
 
         endpoints.forEach { endpoint ->
             try {
-                return request(endpoint, apiKey, payload)
+                return requestWithOneRetry(endpoint, apiKey, payload)
             } catch (e: IOException) {
-                lastError = e
+                lastNetworkError = e
             }
         }
 
-        throw lastError ?: IllegalStateException("ارتباط با سرویس AvalAI برقرار نشد.")
+        throw lastNetworkError ?: IllegalStateException("ارتباط با سرویس AvalAI برقرار نشد.")
+    }
+
+    private fun requestWithOneRetry(
+        endpoint: String,
+        apiKey: String,
+        payload: JSONObject
+    ): String {
+        return try {
+            request(endpoint, apiKey, payload)
+        } catch (e: EmptyOutputException) {
+            val retryPayload = JSONObject(payload.toString()).apply {
+                put("reasoning_effort", "none")
+                put("max_tokens", maxOf(512, payload.optInt("max_tokens", 0) * 2))
+            }
+            request(endpoint, apiKey, retryPayload)
+        }
     }
 
     private fun request(endpoint: String, apiKey: String, payload: JSONObject): String {
@@ -154,14 +182,16 @@ object AvalAiVisionProvider {
                 throw IllegalStateException("AvalAI پاسخی برنگرداند.")
             }
 
-            val message = choices.getJSONObject(0).getJSONObject("message")
-            val content = message.opt("content")
+            val choice = choices.getJSONObject(0)
+            val finishReason = choice.optString("finish_reason").takeIf { it.isNotBlank() }
+            val message = choice.getJSONObject("message")
+            val messageContent = message.opt("content")
 
-            val text = when (content) {
-                is String -> content
+            val text = when (messageContent) {
+                is String -> messageContent
                 is JSONArray -> buildString {
-                    for (i in 0 until content.length()) {
-                        val item = content.optJSONObject(i) ?: continue
+                    for (i in 0 until messageContent.length()) {
+                        val item = messageContent.optJSONObject(i) ?: continue
                         val t = item.optString("text")
                         if (t.isNotBlank()) append(t)
                     }
@@ -170,7 +200,7 @@ object AvalAiVisionProvider {
             }.trim()
 
             if (text.isBlank()) {
-                throw IllegalStateException("متن توضیح از AvalAI دریافت نشد.")
+                throw EmptyOutputException(finishReason)
             }
 
             return text
