@@ -346,7 +346,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۵",
+            text = "دیدیار ۰٫۵٫۱",
             style = MaterialTheme.typography.headlineMedium
         )
 
