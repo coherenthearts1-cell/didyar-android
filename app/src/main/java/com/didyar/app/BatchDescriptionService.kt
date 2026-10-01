@@ -113,7 +113,8 @@ class BatchDescriptionService : Service() {
 
     private suspend fun processPendingScenes() {
         val project = ProjectStore.load(this)
-        val apiKey = SecureSecretStore.load(this, "avalai_api_key").orEmpty().trim()
+        val provider = AiProviderStore.load(this)
+        val apiKey = SecureSecretStore.load(this, provider.secretName).orEmpty().trim()
 
         if (project == null) {
             finishWithError("پروژهٔ ذخیره‌شده‌ای برای پردازش پیدا نشد.")
@@ -121,7 +122,7 @@ class BatchDescriptionService : Service() {
         }
 
         if (apiKey.isBlank()) {
-            finishWithError("کلید AvalAI پیدا نشد.")
+            finishWithError("کلید ${provider.displayName} پیدا نشد.")
             return
         }
 
@@ -212,7 +213,8 @@ class BatchDescriptionService : Service() {
                             message = message
                         )
                         updateNotification(message, completed, total)
-                    }
+                    },
+                    provider = provider
                 )
 
                 val isRedundant =
@@ -311,7 +313,7 @@ class BatchDescriptionService : Service() {
                 ""
             }
             val details =
-                "نسخه دیدیار: ۰٫۵٫۶\n" +
+                "نسخه دیدیار: ۰٫۶٫۰\n" +
                     sceneText +
                     "نوع خطا: ${e::class.java.simpleName}\n" +
                     "پیام: ${e.message ?: "خطای نامشخص"}"
@@ -340,7 +342,7 @@ class BatchDescriptionService : Service() {
 
     private fun finishWithError(message: String) {
         val details =
-            "نسخه دیدیار: ۰٫۵٫۶\n" +
+            "نسخه دیدیار: ۰٫۶٫۰\n" +
                 "نوع خطا: ProjectState\n" +
                 "پیام: $message"
         BatchStatusStore.write(
