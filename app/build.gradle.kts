@@ -1,3 +1,5 @@
+val stableDebugKeystore = rootProject.file(".ci-signing/didyar-debug.keystore")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,9 +14,28 @@ android {
         applicationId = "com.didyar.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.3.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("didyarDebug") {
+            if (stableDebugKeystore.exists()) {
+                storeFile = stableDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            if (stableDebugKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("didyarDebug")
+            }
+        }
     }
 
     buildFeatures {
