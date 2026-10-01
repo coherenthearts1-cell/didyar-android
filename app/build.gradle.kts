@@ -14,8 +14,8 @@ android {
         applicationId = "com.didyar.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.5.2"
+        versionCode = 14
+        versionName = "0.5.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
