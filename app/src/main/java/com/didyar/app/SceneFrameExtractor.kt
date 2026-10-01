@@ -28,13 +28,21 @@ object SceneFrameExtractor {
                 .coerceAtMost(durationMs)
                 .coerceAtLeast(safeStart)
 
-            val span = (safeEnd - safeStart).coerceAtLeast(800L)
-            val times = listOf(
-                safeStart + minOf(350L, span / 5),
-                safeStart + span / 2,
-                safeStart + (span * 4 / 5)
-            ).map { it.coerceIn(0L, durationMs) }
-                .distinct()
+            val span = (safeEnd - safeStart).coerceAtLeast(500L)
+
+            val sampleCount = when {
+                span <= 20_000L -> 7
+                span <= 60_000L -> 5
+                else -> 4
+            }
+
+            val times = buildList {
+                for (i in 1..sampleCount) {
+                    val fraction = i.toDouble() / (sampleCount + 1).toDouble()
+                    val time = safeStart + (span * fraction).toLong()
+                    add(time.coerceIn(0L, durationMs))
+                }
+            }.distinct()
 
             times.mapNotNull { timeMs ->
                 val frame = retriever.getFrameAtTime(
