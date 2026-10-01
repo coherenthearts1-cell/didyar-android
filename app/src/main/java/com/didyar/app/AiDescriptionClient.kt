@@ -187,7 +187,14 @@ object AvalAiVisionProvider {
                     put("max_tokens", maxOf(512, optInt("max_tokens", 0) * 2))
                 }
             } catch (e: HttpStatusException) {
-                val transient = e.statusCode == 429 || e.statusCode in 500..599
+                val insufficientCredit =
+                    e.statusCode == 429 &&
+                        (e.message?.contains("insufficient credit", ignoreCase = true) == true ||
+                            e.message?.contains("remaining balance", ignoreCase = true) == true)
+
+                val transient =
+                    !insufficientCredit &&
+                        (e.statusCode == 429 || e.statusCode in 500..599)
                 val maxAttempts = 1
                 if (!transient || transientAttempts >= maxAttempts) throw e
 
@@ -252,14 +259,22 @@ object AvalAiVisionProvider {
                         ?.trim()
                         ?.toLongOrNull()
 
+                val userMessage = if (
+                    status == 429 &&
+                    (message.contains("insufficient credit", ignoreCase = true) ||
+                        message.contains("remaining balance", ignoreCase = true))
+                ) {
+                    "اعتبار حساب AvalAI برای این درخواست کافی نیست. لطفاً اعتبار حساب را افزایش دهید."
+                } else if (message.isNotBlank()) {
+                    "AvalAI خطای $status: $message"
+                } else {
+                    "AvalAI خطای $status برگرداند."
+                }
+
                 throw HttpStatusException(
                     statusCode = status,
                     retryAfterSeconds = retryAfterSeconds,
-                    message = if (message.isNotBlank()) {
-                        "AvalAI خطای $status: $message"
-                    } else {
-                        "AvalAI خطای $status برگرداند."
-                    }
+                    message = userMessage
                 )
             }
 
