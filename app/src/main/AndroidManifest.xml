@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application
         android:allowBackup="true"
         android:label="دیدیار"
         android:supportsRtl="true"
         android:theme="@style/Theme.Didyar">
+        <service
+            android:name=".BatchDescriptionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
