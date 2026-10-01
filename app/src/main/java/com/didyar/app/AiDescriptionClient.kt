@@ -55,7 +55,8 @@ object AvalAiVisionProvider {
         sceneIndex: Int,
         sceneTotal: Int,
         timecode: String,
-        previousDescription: String? = null
+        previousDescription: String? = null,
+        onRetry: ((String) -> Unit)? = null
     ): String {
         require(apiKey.isNotBlank()) { "کلید API وارد نشده است." }
         require(framesBase64.isNotEmpty()) { "از این صحنه تصویری برای ارسال پیدا نشد." }
@@ -113,7 +114,7 @@ object AvalAiVisionProvider {
             }
         )
 
-        framesBase64.take(7).forEach { frame ->
+        framesBase64.take(5).forEach { frame ->
             content.put(
                 JSONObject().apply {
                     put("type", "image_url")
@@ -144,15 +145,19 @@ object AvalAiVisionProvider {
             put("temperature", 0.2)
         }
 
-        return requestWithFallback(apiKey, payload)
+        return requestWithFallback(apiKey, payload, onRetry)
     }
 
-    private fun requestWithFallback(apiKey: String, payload: JSONObject): String {
+    private fun requestWithFallback(
+        apiKey: String,
+        payload: JSONObject,
+        onRetry: ((String) -> Unit)? = null
+    ): String {
         var lastNetworkError: Exception? = null
 
         endpoints.forEach { endpoint ->
             try {
-                return requestWithOneRetry(endpoint, apiKey, payload)
+                return requestWithOneRetry(endpoint, apiKey, payload, onRetry)
             } catch (e: IOException) {
                 lastNetworkError = e
             }
@@ -164,7 +169,8 @@ object AvalAiVisionProvider {
     private fun requestWithOneRetry(
         endpoint: String,
         apiKey: String,
-        payload: JSONObject
+        payload: JSONObject,
+        onRetry: ((String) -> Unit)? = null
     ): String {
         var workingPayload = JSONObject(payload.toString())
         var emptyOutputRetried = false
@@ -182,22 +188,26 @@ object AvalAiVisionProvider {
                 }
             } catch (e: HttpStatusException) {
                 val transient = e.statusCode == 429 || e.statusCode in 500..599
-                val maxAttempts = if (e.statusCode == 429) 4 else 2
+                val maxAttempts = 1
                 if (!transient || transientAttempts >= maxAttempts) throw e
 
                 val waitMs = if (e.statusCode == 429) {
-                    val serverWait = e.retryAfterSeconds?.times(1_000L)
-                    serverWait ?: when (transientAttempts) {
-                        0 -> 30_000L
-                        1 -> 60_000L
-                        2 -> 90_000L
-                        else -> 120_000L
-                    }
+                    val serverWaitMs = e.retryAfterSeconds
+                        ?.coerceIn(1L, 60L)
+                        ?.times(1_000L)
+                    serverWaitMs ?: 45_000L
                 } else {
-                    3_000L * (transientAttempts + 1)
+                    5_000L
                 }
 
                 transientAttempts += 1
+                val waitSeconds = (waitMs / 1_000L).coerceAtLeast(1L)
+                val retryMessage = if (e.statusCode == 429) {
+                    "AvalAI محدودیت موقت داده؛ $waitSeconds ثانیه دیگر یک بار دوباره تلاش می‌کنم."
+                } else {
+                    "AvalAI موقتاً پاسخ مناسب نداده؛ $waitSeconds ثانیه دیگر یک بار دوباره تلاش می‌کنم."
+                }
+                onRetry?.invoke(retryMessage)
                 Thread.sleep(waitMs)
             }
         }
