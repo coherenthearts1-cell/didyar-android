@@ -192,6 +192,13 @@ private fun DidyarScreen() {
             narrationInProgress = false
             lastNarratedSceneIndex = -1
             status = "فیلم انتخاب شد. در حال خواندن مشخصات."
+            ProjectStore.save(
+                context = context,
+                uri = uri,
+                fileName = fileName,
+                durationMs = 0L,
+                scenes = emptyList()
+            )
 
             scope.launch {
                 try {
@@ -199,7 +206,8 @@ private fun DidyarScreen() {
                         VideoInfoReader.read(context, uri)
                     }
                     durationMs = info.durationMs
-                    status = "فیلم آماده است. مدت ${formatTime(durationMs)}."
+                    persistProject()
+                    status = "فیلم آماده است. مدت ${formatTime(durationMs)}. پروژه ذخیره شد."
                 } catch (e: Exception) {
                     status = "خواندن فیلم ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                 }
@@ -277,7 +285,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۴٫۲",
+            text = "دیدیار ۰٫۵",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -298,6 +306,22 @@ private fun DidyarScreen() {
         Text("فایل: $fileName")
         if (durationMs > 0) {
             Text("مدت فیلم: ${formatTime(durationMs)}")
+        }
+
+        if (selectedUri != null) {
+            Button(
+                onClick = {
+                    persistProject()
+                    val message = "پروژه با همهٔ صحنه‌ها و توضیحات فعلی ذخیره شد."
+                    status = message
+                    rootView.announceForAccessibility(message)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("ذخیره پروژه")
+            }
+
+            Text("دیدیار تغییرات توضیحات را نیز به‌صورت خودکار ذخیره می‌کند.")
         }
 
         AndroidView(
@@ -370,7 +394,8 @@ private fun DidyarScreen() {
                             selectedSceneIndex = -1
                             descriptionDraft = ""
                         }
-                        status = "تحلیل تمام شد. ${scenes.size} نقطهٔ احتمالی صحنه پیدا شد."
+                        persistProject()
+                        status = "تحلیل تمام شد. ${scenes.size} صحنهٔ معنادار پیدا شد و پروژه ذخیره شد."
                     } catch (e: Exception) {
                         status = "تحلیل ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                     } finally {
@@ -574,9 +599,15 @@ private fun DidyarScreen() {
                                     if (sceneIndex in scenes.indices) {
                                         scenes[sceneIndex] =
                                             scenes[sceneIndex].copy(description = description)
-                                        if (sceneIndex == selectedSceneIndex) {
+
+                                        if (!descriptionFieldFocused) {
+                                            selectedSceneIndex = sceneIndex
+                                            descriptionDraft = description
+                                        } else if (sceneIndex == selectedSceneIndex) {
                                             descriptionDraft = description
                                         }
+
+                                        persistProject()
                                     }
 
                                     batchProgress = position + 1
@@ -809,8 +840,9 @@ private fun DidyarScreen() {
                                     if (index in scenes.indices) {
                                         scenes[index] = scenes[index].copy(description = description)
                                         descriptionDraft = description
+                                        persistProject()
                                     }
-                                    status = "توضیح خودکار صحنه ${scene.index} آماده شد."
+                                    status = "توضیح خودکار صحنه ${scene.index} آماده و ذخیره شد."
                                 } catch (e: Exception) {
                                     status = "ساخت توضیح خودکار ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                                 } finally {
@@ -835,7 +867,9 @@ private fun DidyarScreen() {
                         value = descriptionDraft,
                         onValueChange = { descriptionDraft = it },
                         label = { Text("توضیح صحنه") },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { descriptionFieldFocused = it.isFocused },
                         minLines = 2
                     )
 
@@ -844,7 +878,8 @@ private fun DidyarScreen() {
                             scenes[selectedSceneIndex] = currentScene.copy(
                                 description = descriptionDraft.trim()
                             )
-                            status = "توضیح صحنه ${currentScene.index} ذخیره شد."
+                            persistProject()
+                            status = "توضیح صحنه ${currentScene.index} و پروژه ذخیره شد."
                         },
                         enabled = !aiBusy,
                         modifier = Modifier.fillMaxWidth()
