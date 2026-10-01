@@ -313,7 +313,7 @@ class BatchDescriptionService : Service() {
                 ""
             }
             val details =
-                "نسخه دیدیار: ۰٫۶٫۱\n" +
+                "نسخه دیدیار: ۰٫۶٫۲\n" +
                     sceneText +
                     "نوع خطا: ${e::class.java.simpleName}\n" +
                     "پیام: ${e.message ?: "خطای نامشخص"}"
@@ -342,7 +342,7 @@ class BatchDescriptionService : Service() {
 
     private fun finishWithError(message: String) {
         val details =
-            "نسخه دیدیار: ۰٫۶٫۱\n" +
+            "نسخه دیدیار: ۰٫۶٫۲\n" +
                 "نوع خطا: ProjectState\n" +
                 "پیام: $message"
         BatchStatusStore.write(
