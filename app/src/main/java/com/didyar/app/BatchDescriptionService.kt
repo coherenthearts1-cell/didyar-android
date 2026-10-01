@@ -199,7 +199,20 @@ class BatchDescriptionService : Service() {
                     sceneIndex = scene.index,
                     sceneTotal = scenes.size,
                     timecode = formatTime(scene.timeMs),
-                    previousDescription = previousDescription
+                    previousDescription = previousDescription,
+                    onRetry = { retryMessage ->
+                        val message =
+                            "$retryMessage صحنه ${scene.index}؛ ${position + 1} از $total"
+                        BatchStatusStore.write(
+                            this,
+                            running = true,
+                            completed = completed,
+                            total = total,
+                            lastSceneIndex = lastSceneIndex,
+                            message = message
+                        )
+                        updateNotification(message, completed, total)
+                    }
                 )
 
                 val isRedundant =
@@ -239,7 +252,18 @@ class BatchDescriptionService : Service() {
                 updateNotification(progressMessage, completed, total)
 
                 if (position < pendingIndices.lastIndex && !stopRequested) {
-                    delay(12_000)
+                    val waitMessage =
+                        "برای جلوگیری از محدودیت سرویس، 25 ثانیه تا درخواست صحنهٔ بعدی صبر می‌کنم."
+                    BatchStatusStore.write(
+                        this,
+                        running = true,
+                        completed = completed,
+                        total = total,
+                        lastSceneIndex = lastSceneIndex,
+                        message = waitMessage
+                    )
+                    updateNotification(waitMessage, completed, total)
+                    delay(25_000)
                 }
             }
 
@@ -287,7 +311,7 @@ class BatchDescriptionService : Service() {
                 ""
             }
             val details =
-                "نسخه دیدیار: ۰٫۵٫۴\n" +
+                "نسخه دیدیار: ۰٫۵٫۵\n" +
                     sceneText +
                     "نوع خطا: ${e::class.java.simpleName}\n" +
                     "پیام: ${e.message ?: "خطای نامشخص"}"
@@ -316,7 +340,7 @@ class BatchDescriptionService : Service() {
 
     private fun finishWithError(message: String) {
         val details =
-            "نسخه دیدیار: ۰٫۵٫۴\n" +
+            "نسخه دیدیار: ۰٫۵٫۵\n" +
                 "نوع خطا: ProjectState\n" +
                 "پیام: $message"
         BatchStatusStore.write(
