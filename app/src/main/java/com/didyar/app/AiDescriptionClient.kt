@@ -16,6 +16,11 @@ object AvalAiVisionProvider {
         "https://api.avalai.org/v1/chat/completions"
     )
 
+    private class HttpStatusException(
+        val statusCode: Int,
+        message: String
+    ) : IllegalStateException(message)
+
     private class EmptyOutputException(
         val finishReason: String?
     ) : IllegalStateException(
@@ -125,14 +130,32 @@ object AvalAiVisionProvider {
         apiKey: String,
         payload: JSONObject
     ): String {
-        return try {
-            request(endpoint, apiKey, payload)
-        } catch (e: EmptyOutputException) {
-            val retryPayload = JSONObject(payload.toString()).apply {
-                put("reasoning_effort", "none")
-                put("max_tokens", maxOf(512, payload.optInt("max_tokens", 0) * 2))
+        var workingPayload = JSONObject(payload.toString())
+        var emptyOutputRetried = false
+        var transientAttempts = 0
+
+        while (true) {
+            try {
+                return request(endpoint, apiKey, workingPayload)
+            } catch (e: EmptyOutputException) {
+                if (emptyOutputRetried) throw e
+                emptyOutputRetried = true
+                workingPayload = JSONObject(workingPayload.toString()).apply {
+                    put("reasoning_effort", "none")
+                    put("max_tokens", maxOf(512, optInt("max_tokens", 0) * 2))
+                }
+            } catch (e: HttpStatusException) {
+                val transient = e.statusCode == 429 || e.statusCode in 500..599
+                if (!transient || transientAttempts >= 2) throw e
+
+                val waitMs = if (e.statusCode == 429) {
+                    4_000L * (transientAttempts + 1)
+                } else {
+                    2_000L * (transientAttempts + 1)
+                }
+                transientAttempts += 1
+                Thread.sleep(waitMs)
             }
-            request(endpoint, apiKey, retryPayload)
         }
     }
 
@@ -170,9 +193,13 @@ object AvalAiVisionProvider {
                     }
                 }.getOrNull().orEmpty()
 
-                throw IllegalStateException(
-                    if (message.isNotBlank()) message
-                    else "AvalAI خطای $status برگرداند."
+                throw HttpStatusException(
+                    statusCode = status,
+                    message = if (message.isNotBlank()) {
+                        "AvalAI خطای $status: $message"
+                    } else {
+                        "AvalAI خطای $status برگرداند."
+                    }
                 )
             }
 
