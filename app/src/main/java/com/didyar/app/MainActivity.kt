@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -70,6 +71,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun DidyarScreen() {
     val context = LocalContext.current
+    val rootView = LocalView.current
     val scope = rememberCoroutineScope()
     val player = remember { ExoPlayer.Builder(context).build() }
     val tts = remember { PersianTts(context) }
@@ -93,6 +95,7 @@ private fun DidyarScreen() {
     }
     var showAiSettings by remember { mutableStateOf(apiKey.isBlank()) }
     var aiBusy by remember { mutableStateOf(false) }
+    var aiConnectionStatus by remember { mutableStateOf("وضعیت اتصال: هنوز آزمایش نشده است.") }
 
     fun selectScene(index: Int) {
         if (index !in scenes.indices) return
@@ -172,7 +175,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۳",
+            text = "دیدیار ۰٫۳٫۱",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -315,7 +318,9 @@ private fun DidyarScreen() {
                     Button(
                         onClick = {
                             SecureSecretStore.save(context, "avalai_api_key", apiKey.trim())
-                            status = "کلید AvalAI به‌صورت رمزگذاری‌شده روی گوشی ذخیره شد."
+                            val message = "کلید AvalAI با موفقیت ذخیره شد."
+                            status = message
+                            rootView.announceForAccessibility(message)
                         },
                         enabled = apiKey.isNotBlank() && !aiBusy,
                         modifier = Modifier.fillMaxWidth()
@@ -328,16 +333,25 @@ private fun DidyarScreen() {
                             val key = apiKey.trim()
                             if (key.isBlank()) return@Button
                             aiBusy = true
-                            status = "در حال آزمایش اتصال به AvalAI."
+                            val starting = "در حال آزمایش اتصال به AvalAI."
+                            status = starting
+                            aiConnectionStatus = "وضعیت اتصال: در حال آزمایش..."
+                            rootView.announceForAccessibility(starting)
                             scope.launch {
                                 try {
                                     withContext(Dispatchers.IO) {
                                         AvalAiVisionProvider.testConnection(key)
                                     }
                                     SecureSecretStore.save(context, "avalai_api_key", key)
-                                    status = "اتصال به AvalAI برقرار شد و کلید معتبر است."
+                                    val success = "اتصال به AvalAI برقرار شد و کلید معتبر است."
+                                    status = success
+                                    aiConnectionStatus = "وضعیت اتصال: برقرار شد. کلید معتبر است."
+                                    rootView.announceForAccessibility(success)
                                 } catch (e: Exception) {
-                                    status = "آزمایش اتصال ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                    val failure = "آزمایش اتصال ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                    status = failure
+                                    aiConnectionStatus = failure
+                                    rootView.announceForAccessibility(failure)
                                 } finally {
                                     aiBusy = false
                                 }
@@ -349,11 +363,21 @@ private fun DidyarScreen() {
                         Text(if (aiBusy) "در حال آزمایش..." else "آزمایش اتصال AvalAI")
                     }
 
+                    Text(
+                        text = aiConnectionStatus,
+                        modifier = Modifier.semantics {
+                            liveRegion = LiveRegionMode.Assertive
+                        }
+                    )
+
                     Button(
                         onClick = {
                             SecureSecretStore.clear(context, "avalai_api_key")
                             apiKey = ""
-                            status = "کلید AvalAI از گوشی پاک شد."
+                            aiConnectionStatus = "وضعیت اتصال: کلید پاک شده است."
+                            val message = "کلید AvalAI از گوشی پاک شد."
+                            status = message
+                            rootView.announceForAccessibility(message)
                         },
                         enabled = apiKey.isNotBlank() && !aiBusy,
                         modifier = Modifier.fillMaxWidth()
