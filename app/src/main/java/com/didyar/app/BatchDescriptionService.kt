@@ -184,15 +184,35 @@ class BatchDescriptionService : Service() {
                     endMs = nextSceneStart
                 )
 
+                val previousDescription = scenes
+                    .take(sceneIndex)
+                    .asReversed()
+                    .firstOrNull {
+                        it.description.isNotBlank() &&
+                            it.description != AvalAiVisionProvider.NO_NEW_VISUAL_MARKER
+                    }
+                    ?.description
+
                 val description = AvalAiVisionProvider.describeScene(
                     apiKey = apiKey,
                     framesBase64 = frames,
                     sceneIndex = scene.index,
                     sceneTotal = scenes.size,
-                    timecode = formatTime(scene.timeMs)
+                    timecode = formatTime(scene.timeMs),
+                    previousDescription = previousDescription
                 )
 
-                scenes[sceneIndex] = scene.copy(description = description)
+                val isRedundant =
+                    description.trim() == AvalAiVisionProvider.NO_NEW_VISUAL_MARKER
+
+                scenes[sceneIndex] = scene.copy(
+                    description = if (isRedundant) {
+                        AvalAiVisionProvider.NO_NEW_VISUAL_MARKER
+                    } else {
+                        description
+                    }
+                )
+
                 ProjectStore.save(
                     context = this,
                     uri = project.uri,
@@ -203,8 +223,11 @@ class BatchDescriptionService : Service() {
 
                 completed = position + 1
                 lastSceneIndex = sceneIndex
-                val progressMessage =
+                val progressMessage = if (isRedundant) {
+                    "صحنه ${scene.index} تغییر دیداری مهم تازه‌ای نداشت؛ $completed از $total"
+                } else {
                     "صحنه ${scene.index} آماده شد؛ $completed از $total"
+                }
                 BatchStatusStore.write(
                     this,
                     running = true,
@@ -220,10 +243,32 @@ class BatchDescriptionService : Service() {
                 }
             }
 
+            val removedCount = scenes.count {
+                it.description == AvalAiVisionProvider.NO_NEW_VISUAL_MARKER
+            }
+            val cleanedScenes = scenes
+                .filterNot {
+                    it.description == AvalAiVisionProvider.NO_NEW_VISUAL_MARKER
+                }
+                .mapIndexed { index, item ->
+                    item.copy(index = index + 1)
+                }
+
+            ProjectStore.save(
+                context = this,
+                uri = project.uri,
+                fileName = project.fileName,
+                durationMs = project.durationMs,
+                scenes = cleanedScenes
+            )
+
             val finalMessage = if (stopRequested) {
-                "پردازش متوقف شد؛ $completed از $total صحنه آماده شد."
+                "پردازش متوقف شد؛ $completed از $total مورد بررسی شد."
+            } else if (removedCount > 0) {
+                "توضیح‌دار کردن کامل شد؛ $removedCount صحنهٔ تکراری کنار گذاشته شد و " +
+                    "${cleanedScenes.size} صحنهٔ مفید باقی ماند."
             } else {
-                "توضیح‌دار کردن کامل شد؛ $completed صحنه آماده شد."
+                "توضیح‌دار کردن کامل شد؛ ${cleanedScenes.size} صحنه آماده شد."
             }
 
             BatchStatusStore.write(
@@ -231,7 +276,7 @@ class BatchDescriptionService : Service() {
                 running = false,
                 completed = completed,
                 total = total,
-                lastSceneIndex = lastSceneIndex,
+                lastSceneIndex = cleanedScenes.lastIndex,
                 message = finalMessage
             )
             updateNotification(finalMessage, completed, total, finished = true)
@@ -242,7 +287,7 @@ class BatchDescriptionService : Service() {
                 ""
             }
             val details =
-                "نسخه دیدیار: ۰٫۵\n" +
+                "نسخه دیدیار: ۰٫۵٫۳\n" +
                     sceneText +
                     "نوع خطا: ${e::class.java.simpleName}\n" +
                     "پیام: ${e.message ?: "خطای نامشخص"}"
@@ -271,7 +316,7 @@ class BatchDescriptionService : Service() {
 
     private fun finishWithError(message: String) {
         val details =
-            "نسخه دیدیار: ۰٫۵\n" +
+            "نسخه دیدیار: ۰٫۵٫۳\n" +
                 "نوع خطا: ProjectState\n" +
                 "پیام: $message"
         BatchStatusStore.write(
