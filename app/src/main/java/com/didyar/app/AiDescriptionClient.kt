@@ -8,14 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object AvalAiVisionProvider {
-    const val MODEL = "gemini-3.8-flash"
     const val NO_NEW_VISUAL_MARKER = "__DIDYAR_NO_NEW_VISUAL__"
-
-    private val endpoints = listOf(
-        "https://api.avalai.ir/v1/chat/completions",
-        "https://api.avalapis.ir/v1/chat/completions",
-        "https://api.avalai.org/v1/chat/completions"
-    )
 
     private class HttpStatusException(
         val statusCode: Int,
@@ -29,13 +22,16 @@ object AvalAiVisionProvider {
         if (finishReason == "length") {
             "مدل به سقف خروجی رسید و متن نهایی تولید نشد."
         } else {
-            "متن توضیح از AvalAI دریافت نشد."
+            "متن توضیح از سرویس دریافت نشد."
         }
     )
 
-    fun testConnection(apiKey: String): String {
+    fun testConnection(
+        apiKey: String,
+        provider: AiProvider = AiProvider.AVALAI
+    ): String {
         val payload = JSONObject().apply {
-            put("model", MODEL)
+            put("model", provider.modelId)
             put("messages", JSONArray().put(
                 JSONObject().apply {
                     put("role", "user")
@@ -46,7 +42,7 @@ object AvalAiVisionProvider {
             put("reasoning_effort", "none")
             put("temperature", 0)
         }
-        return requestWithFallback(apiKey, payload)
+        return requestWithFallback(apiKey, payload, provider)
     }
 
     fun describeScene(
@@ -56,7 +52,8 @@ object AvalAiVisionProvider {
         sceneTotal: Int,
         timecode: String,
         previousDescription: String? = null,
-        onRetry: ((String) -> Unit)? = null
+        onRetry: ((String) -> Unit)? = null,
+        provider: AiProvider = AiProvider.AVALAI
     ): String {
         require(apiKey.isNotBlank()) { "کلید API وارد نشده است." }
         require(framesBase64.isNotEmpty()) { "از این صحنه تصویری برای ارسال پیدا نشد." }
@@ -130,7 +127,7 @@ object AvalAiVisionProvider {
         }
 
         val payload = JSONObject().apply {
-            put("model", MODEL)
+            put("model", provider.modelId)
             put(
                 "messages",
                 JSONArray().put(
@@ -140,22 +137,23 @@ object AvalAiVisionProvider {
                     }
                 )
             )
-            put("max_tokens", 360)
+            put("max_tokens", 256)
             put("reasoning_effort", "none")
             put("temperature", 0.2)
         }
 
-        return requestWithFallback(apiKey, payload, onRetry)
+        return requestWithFallback(apiKey, payload, provider, onRetry)
     }
 
     private fun requestWithFallback(
         apiKey: String,
         payload: JSONObject,
+        provider: AiProvider,
         onRetry: ((String) -> Unit)? = null
     ): String {
         var lastNetworkError: Exception? = null
 
-        endpoints.forEach { endpoint ->
+        provider.endpoints.forEach { endpoint ->
             try {
                 return requestWithOneRetry(endpoint, apiKey, payload, onRetry)
             } catch (e: IOException) {
@@ -163,7 +161,8 @@ object AvalAiVisionProvider {
             }
         }
 
-        throw lastNetworkError ?: IllegalStateException("ارتباط با سرویس AvalAI برقرار نشد.")
+        throw lastNetworkError
+            ?: IllegalStateException("ارتباط با سرویس ${provider.displayName} برقرار نشد.")
     }
 
     private fun requestWithOneRetry(
@@ -210,9 +209,9 @@ object AvalAiVisionProvider {
                 transientAttempts += 1
                 val waitSeconds = (waitMs / 1_000L).coerceAtLeast(1L)
                 val retryMessage = if (e.statusCode == 429) {
-                    "AvalAI محدودیت موقت داده؛ $waitSeconds ثانیه دیگر یک بار دوباره تلاش می‌کنم."
+                    "سرویس محدودیت موقت داده؛ $waitSeconds ثانیه دیگر یک بار دوباره تلاش می‌کنم."
                 } else {
-                    "AvalAI موقتاً پاسخ مناسب نداده؛ $waitSeconds ثانیه دیگر یک بار دوباره تلاش می‌کنم."
+                    "سرویس موقتاً پاسخ مناسب نداده؛ $waitSeconds ثانیه دیگر یک بار دوباره تلاش می‌کنم."
                 }
                 onRetry?.invoke(retryMessage)
                 Thread.sleep(waitMs)
@@ -264,11 +263,11 @@ object AvalAiVisionProvider {
                     (message.contains("insufficient credit", ignoreCase = true) ||
                         message.contains("remaining balance", ignoreCase = true))
                 ) {
-                    "اعتبار حساب AvalAI برای این درخواست کافی نیست. لطفاً اعتبار حساب را افزایش دهید."
+                    "اعتبار حساب سرویس برای این درخواست کافی نیست. لطفاً اعتبار حساب را افزایش دهید."
                 } else if (message.isNotBlank()) {
-                    "AvalAI خطای $status: $message"
+                    "سرویس خطای $status: $message"
                 } else {
-                    "AvalAI خطای $status برگرداند."
+                    "سرویس خطای $status برگرداند."
                 }
 
                 throw HttpStatusException(
@@ -280,9 +279,9 @@ object AvalAiVisionProvider {
 
             val root = JSONObject(responseText)
             val choices = root.optJSONArray("choices")
-                ?: throw IllegalStateException("پاسخ AvalAI ساختار مورد انتظار را ندارد.")
+                ?: throw IllegalStateException("پاسخ سرویس ساختار مورد انتظار را ندارد.")
             if (choices.length() == 0) {
-                throw IllegalStateException("AvalAI پاسخی برنگرداند.")
+                throw IllegalStateException("سرویس پاسخی برنگرداند.")
             }
 
             val choice = choices.getJSONObject(0)
