@@ -1,9 +1,12 @@
 package com.didyar.app
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.accessibility.AccessibilityManager
@@ -126,7 +129,7 @@ private fun DidyarScreen() {
     var batchBusy by remember { mutableStateOf(false) }
     var batchProgress by remember { mutableIntStateOf(0) }
     var batchTotal by remember { mutableIntStateOf(0) }
-    var batchCancelRequested by remember { mutableStateOf(false) }
+    var lastBatchUpdateToken by remember { mutableLongStateOf(0L) }
     var lastErrorDetails by remember { mutableStateOf("") }
     var autoNarrationEnabled by remember { mutableStateOf(false) }
     var narrationInProgress by remember { mutableStateOf(false) }
@@ -215,6 +218,19 @@ private fun DidyarScreen() {
         }
     }
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        BatchDescriptionService.start(context)
+        val message = if (granted) {
+            "پردازش پس‌زمینه شروع شد؛ پیشرفت از نوار اعلان قابل مشاهده است."
+        } else {
+            "پردازش پس‌زمینه شروع شد، اما اجازهٔ اعلان داده نشد."
+        }
+        status = message
+        rootView.announceForAccessibility(message)
+    }
+
     LaunchedEffect(selectedUri) {
         selectedUri?.let { uri ->
             player.setMediaItem(MediaItem.fromUri(uri))
@@ -260,6 +276,51 @@ private fun DidyarScreen() {
             }
 
             delay(250)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            val batchStatus = BatchStatusStore.load(context)
+            batchBusy = batchStatus.running
+            batchProgress = batchStatus.completed
+            batchTotal = batchStatus.total
+
+            if (
+                batchStatus.updateToken > 0L &&
+                batchStatus.updateToken != lastBatchUpdateToken
+            ) {
+                lastBatchUpdateToken = batchStatus.updateToken
+
+                if (batchStatus.message.isNotBlank()) {
+                    status = batchStatus.message
+                }
+                if (batchStatus.error.isNotBlank()) {
+                    lastErrorDetails = batchStatus.error
+                }
+
+                val saved = ProjectStore.load(context)
+                if (
+                    saved != null &&
+                    saved.uri.toString() == selectedUri?.toString()
+                ) {
+                    if (saved.scenes != scenes.toList()) {
+                        scenes.clear()
+                        scenes.addAll(saved.scenes)
+                    }
+
+                    if (
+                        !descriptionFieldFocused &&
+                        batchStatus.lastSceneIndex in scenes.indices
+                    ) {
+                        selectedSceneIndex = batchStatus.lastSceneIndex
+                        descriptionDraft =
+                            scenes[batchStatus.lastSceneIndex].description
+                    }
+                }
+            }
+
+            delay(750)
         }
     }
 
@@ -529,121 +590,40 @@ private fun DidyarScreen() {
             if (!batchBusy) {
                 Button(
                     onClick = {
-                        val uri = selectedUri ?: return@Button
-                        val key = apiKey.trim()
-                        if (key.isBlank()) return@Button
-
-                        val pendingIndices = scenes.indices.filter {
-                            scenes[it].description.isBlank()
+                        if (selectedUri == null || apiKey.isBlank()) {
+                            return@Button
                         }
-                        if (pendingIndices.isEmpty()) {
+
+                        val pendingDescriptionsNow =
+                            scenes.count { it.description.isBlank() }
+                        if (pendingDescriptionsNow == 0) {
                             val message = "همهٔ صحنه‌ها از قبل توضیح دارند."
                             status = message
                             rootView.announceForAccessibility(message)
                             return@Button
                         }
 
+                        persistProject()
                         player.pause()
                         autoNarrationEnabled = false
-                        batchBusy = true
-                        aiBusy = true
-                        batchCancelRequested = false
-                        batchProgress = 0
-                        batchTotal = pendingIndices.size
+                        lastErrorDetails = ""
 
-                        val startMessage =
-                            "ساخت توضیح برای ${pendingIndices.size} صحنه آغاز شد."
-                        status = startMessage
-                        rootView.announceForAccessibility(startMessage)
-
-                        scope.launch {
-                            try {
-                                lastErrorDetails = ""
-                                for ((position, sceneIndex) in pendingIndices.withIndex()) {
-                                    if (batchCancelRequested) break
-
-                                    val scene = scenes[sceneIndex]
-                                    val nextSceneStart =
-                                        scenes.getOrNull(sceneIndex + 1)?.timeMs ?: durationMs
-
-                                    status =
-                                        "در حال ساخت توضیح صحنه ${scene.index}؛ " +
-                                            "مورد ${position + 1} از ${pendingIndices.size}."
-
-                                    val description = try {
-                                        withContext(Dispatchers.IO) {
-                                            val frames = SceneFrameExtractor.extractBase64Jpegs(
-                                                context = context,
-                                                uri = uri,
-                                                startMs = scene.timeMs,
-                                                endMs = nextSceneStart
-                                            )
-                                            AvalAiVisionProvider.describeScene(
-                                                apiKey = key,
-                                                framesBase64 = frames,
-                                                sceneIndex = scene.index,
-                                                sceneTotal = scenes.size,
-                                                timecode = formatTime(scene.timeMs)
-                                            )
-                                        }
-                                    } catch (e: Exception) {
-                                        lastErrorDetails =
-                                            "نسخه دیدیار: ۰٫۴٫۱\n" +
-                                                "صحنه: ${scene.index} از ${scenes.size}\n" +
-                                                "زمان: ${formatTime(scene.timeMs)}\n" +
-                                                "نوع خطا: ${e::class.java.simpleName}\n" +
-                                                "پیام: ${e.message ?: "خطای نامشخص"}"
-                                        throw e
-                                    }
-
-                                    if (sceneIndex in scenes.indices) {
-                                        scenes[sceneIndex] =
-                                            scenes[sceneIndex].copy(description = description)
-
-                                        if (!descriptionFieldFocused) {
-                                            selectedSceneIndex = sceneIndex
-                                            descriptionDraft = description
-                                        } else if (sceneIndex == selectedSceneIndex) {
-                                            descriptionDraft = description
-                                        }
-
-                                        persistProject()
-                                    }
-
-                                    batchProgress = position + 1
-                                    rootView.announceForAccessibility(
-                                        "توضیح ${position + 1} از ${pendingIndices.size} آماده شد."
-                                    )
-
-                                    if (position < pendingIndices.lastIndex) {
-                                        delay(12_000)
-                                    }
-                                }
-
-                                val finalMessage = if (batchCancelRequested) {
-                                    "ساخت توضیحات متوقف شد. " +
-                                        "$batchProgress از $batchTotal صحنه آماده شد."
-                                } else {
-                                    "ساخت توضیحات تمام شد. " +
-                                        "$batchProgress صحنه توضیح‌دار شد."
-                                }
-                                status = finalMessage
-                                rootView.announceForAccessibility(finalMessage)
-                            } catch (e: Exception) {
-                                if (lastErrorDetails.isBlank()) {
-                                    lastErrorDetails =
-                                        "نسخه دیدیار: ۰٫۴٫۱\n" +
-                                            "نوع خطا: ${e::class.java.simpleName}\n" +
-                                            "پیام: ${e.message ?: "خطای نامشخص"}"
-                                }
-                                val failure =
-                                    "ساخت توضیحات متوقف شد. جزئیات خطا پایین صفحه ذخیره شد."
-                                status = failure
-                                rootView.announceForAccessibility(failure)
-                            } finally {
-                                batchBusy = false
-                                aiBusy = false
-                            }
+                        if (
+                            Build.VERSION.SDK_INT >= 33 &&
+                            context.checkSelfPermission(
+                                Manifest.permission.POST_NOTIFICATIONS
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notificationPermissionLauncher.launch(
+                                Manifest.permission.POST_NOTIFICATIONS
+                            )
+                        } else {
+                            BatchDescriptionService.start(context)
+                            val message =
+                                "توضیح‌دار کردن در پس‌زمینه شروع شد. " +
+                                    "می‌توانید از دیدیار خارج شوید."
+                            status = message
+                            rootView.announceForAccessibility(message)
                         }
                     },
                     enabled =
@@ -655,7 +635,7 @@ private fun DidyarScreen() {
                 ) {
                     Text(
                         if (pendingDescriptions > 0) {
-                            "ساخت توضیح برای همهٔ صحنه‌ها؛ $pendingDescriptions درخواست"
+                            "ساخت توضیح برای همهٔ صحنه‌ها؛ $pendingDescriptions صحنه"
                         } else {
                             "همهٔ صحنه‌ها توضیح دارند"
                         }
@@ -663,7 +643,7 @@ private fun DidyarScreen() {
                 }
             } else {
                 Text(
-                    text = "پیشرفت ساخت توضیحات: $batchProgress از $batchTotal",
+                    text = "پیشرفت پردازش پس‌زمینه: $batchProgress از $batchTotal",
                     modifier = Modifier.semantics {
                         liveRegion = LiveRegionMode.Polite
                     }
@@ -671,15 +651,21 @@ private fun DidyarScreen() {
 
                 Button(
                     onClick = {
-                        batchCancelRequested = true
-                        val message = "پس از پایان صحنهٔ جاری، ساخت توضیحات متوقف می‌شود."
+                        BatchDescriptionService.stop(context)
+                        val message =
+                            "درخواست توقف فرستاده شد؛ پس از درخواست جاری متوقف می‌شود."
                         status = message
                         rootView.announceForAccessibility(message)
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("توقف پس از صحنهٔ جاری")
+                    Text("توقف پس از درخواست جاری")
                 }
+
+                Text(
+                    "می‌توانید از دیدیار خارج شوید؛ پردازش ادامه پیدا می‌کند و " +
+                        "تعداد صحنه‌های آماده از نوار اعلان قابل خواندن است."
+                )
             }
 
             Button(
