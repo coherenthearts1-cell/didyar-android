@@ -8,7 +8,7 @@ import kotlin.math.abs
 
 object SceneAnalyzer {
     private const val SAMPLE_INTERVAL_MS = 2_000L
-    private const val MIN_SCENE_GAP_MS = 3_000L
+    private const val MIN_SCENE_GAP_MS = 8_000L
 
     private data class VisualSignature(
         val grayPixels: IntArray,
@@ -66,62 +66,50 @@ object SceneAnalyzer {
             for (i in 1 until signatures.size) {
                 val currentTime = sampleTimes[i]
                 val lastAcceptedIndex = acceptedSampleIndices.last()
-                val farEnough =
-                    currentTime - sampleTimes[lastAcceptedIndex] >= MIN_SCENE_GAP_MS
-                if (!farEnough) continue
-
-                val previous = signatures[i - 1]
-                val current = signatures[i]
-
-                val adjacentHistogramJump =
-                    histogramDistance(previous.colorHistogram, current.colorHistogram)
-                val adjacentPixelJump =
-                    meanDifference(previous.grayPixels, current.grayPixels)
-
-                val persistentCut = if (i + 1 < signatures.size) {
-                    val next = signatures[i + 1]
-                    val previousToNextHistogram =
-                        histogramDistance(
-                            previous.colorHistogram,
-                            next.colorHistogram
-                        )
-                    val currentToNextHistogram =
-                        histogramDistance(
-                            current.colorHistogram,
-                            next.colorHistogram
-                        )
-
-                    adjacentHistogramJump >= 0.14 &&
-                        adjacentPixelJump >= 26.0 &&
-                        previousToNextHistogram >= 0.12 &&
-                        currentToNextHistogram <= adjacentHistogramJump * 0.80
-                } else {
-                    false
+                if (currentTime - sampleTimes[lastAcceptedIndex] < MIN_SCENE_GAP_MS) {
+                    continue
                 }
 
-                val strongCut =
-                    adjacentHistogramJump >= 0.24 &&
-                        adjacentPixelJump >= 22.0
+                val before = signatures[i - 1]
+                val current = signatures[i]
 
-                if (!strongCut && !persistentCut) continue
+                val adjacentPixelJump =
+                    meanDifference(before.grayPixels, current.grayPixels)
+                val adjacentHistogramJump =
+                    histogramDistance(before.colorHistogram, current.colorHistogram)
+
+                val next1 = signatures.getOrNull(i + 1)
+                val next2 = signatures.getOrNull(i + 2)
+
+                val persistentAcrossNextFrames =
+                    next1 != null &&
+                        next2 != null &&
+                        meanDifference(before.grayPixels, next1.grayPixels) >= 34.0 &&
+                        meanDifference(before.grayPixels, next2.grayPixels) >= 32.0 &&
+                        histogramDistance(before.colorHistogram, next1.colorHistogram) >= 0.18 &&
+                        histogramDistance(before.colorHistogram, next2.colorHistogram) >= 0.16
+
+                val looksLikeRealCut =
+                    adjacentPixelJump >= 42.0 &&
+                        adjacentHistogramJump >= 0.22 &&
+                        persistentAcrossNextFrames
+
+                if (!looksLikeRealCut) continue
 
                 val lastAccepted = signatures[lastAcceptedIndex]
+                val fromLastScenePixels =
+                    meanDifference(lastAccepted.grayPixels, current.grayPixels)
                 val fromLastSceneHistogram =
                     histogramDistance(
                         lastAccepted.colorHistogram,
                         current.colorHistogram
                     )
-                val fromLastScenePixels =
-                    meanDifference(
-                        lastAccepted.grayPixels,
-                        current.grayPixels
-                    )
 
-                val looksLikeSameVisualSetup =
-                    fromLastSceneHistogram < 0.10 &&
-                        fromLastScenePixels < 24.0
+                val stillSameVisualSetup =
+                    fromLastScenePixels < 34.0 &&
+                        fromLastSceneHistogram < 0.18
 
-                if (!looksLikeSameVisualSetup) {
+                if (!stillSameVisualSetup) {
                     acceptedSampleIndices += i
                 }
             }
@@ -139,7 +127,7 @@ object SceneAnalyzer {
     }
 
     private fun frameSignature(source: Bitmap): VisualSignature {
-        val scaled = Bitmap.createScaledBitmap(source, 24, 14, true)
+        val scaled = Bitmap.createScaledBitmap(source, 12, 8, true)
         val width = scaled.width
         val height = scaled.height
         val pixels = IntArray(width * height)
@@ -188,7 +176,7 @@ object SceneAnalyzer {
 
         var sum = 0.0
         for (i in 0 until size) {
-            sum += kotlin.math.abs(a[i] - b[i])
+            sum += abs(a[i] - b[i])
         }
 
         return (sum / 6.0).coerceIn(0.0, 1.0)
