@@ -245,7 +245,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۴٫۱",
+            text = "دیدیار ۰٫۴٫۲",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -553,7 +553,7 @@ private fun DidyarScreen() {
                                     )
 
                                     if (position < pendingIndices.lastIndex) {
-                                        delay(1_500)
+                                        delay(12_000)
                                     }
                                 }
 
