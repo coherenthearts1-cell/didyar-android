@@ -26,11 +26,18 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Restore stable debug signing key
+      - name: Restore stable Didyar signing key
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: didyar-debug-keystore-v1
+          path: .ci-signing
+          key: didyar-debug-keystore-v2
+
+      - name: Create stable Didyar signing key if missing
+        run: |
+          mkdir -p .ci-signing
+          if [ ! -f .ci-signing/didyar-debug.keystore ]; then
+            keytool -genkeypair -v               -keystore .ci-signing/didyar-debug.keystore               -storepass android               -alias androiddebugkey               -keypass android               -keyalg RSA               -keysize 2048               -validity 10000               -dname "CN=Didyar Debug,O=Didyar,C=IR"
+          fi
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
@@ -38,6 +45,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: didyar-android-0.3-debug-apk
+          name: didyar-android-0.3.1-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
