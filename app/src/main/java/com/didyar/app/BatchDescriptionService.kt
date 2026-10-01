@@ -341,7 +341,7 @@ class BatchDescriptionService : Service() {
             )
             builder.addAction(
                 Notification.Action.Builder(
-                    null,
+                    android.R.drawable.ic_media_pause,
                     "توقف پس از درخواست جاری",
                     stopPendingIntent
                 ).build()
