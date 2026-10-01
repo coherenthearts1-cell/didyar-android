@@ -136,6 +136,7 @@ private fun DidyarScreen() {
     var batchTotal by remember { mutableIntStateOf(0) }
     var lastBatchUpdateToken by remember { mutableLongStateOf(0L) }
     var lastErrorDetails by remember { mutableStateOf("") }
+    var connectionErrorDetails by remember { mutableStateOf("") }
     var autoNarrationEnabled by remember { mutableStateOf(false) }
     var narrationInProgress by remember { mutableStateOf(false) }
     var lastNarratedSceneIndex by remember { mutableIntStateOf(-1) }
@@ -361,7 +362,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۶٫۱",
+            text = "دیدیار ۰٫۶٫۲",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -601,6 +602,7 @@ private fun DidyarScreen() {
                             if (key.isBlank()) return@Button
                             val providerForTest = selectedProvider
                             aiBusy = true
+                            connectionErrorDetails = ""
                             val starting =
                                 "در حال آزمایش اتصال به ${providerForTest.displayName}."
                             status = starting
@@ -631,8 +633,15 @@ private fun DidyarScreen() {
                                         "وضعیت اتصال: $connectionDetails"
                                     rootView.announceForAccessibility(success)
                                 } catch (e: Exception) {
+                                    val details =
+                                        "نسخه دیدیار: ۰٫۶٫۲\n" +
+                                            "آزمایش اتصال: ${providerForTest.displayName}\n" +
+                                            "نوع خطا: ${e::class.java.simpleName}\n" +
+                                            "پیام: ${e.message ?: "خطای نامشخص"}"
+                                    connectionErrorDetails = details
+                                    lastErrorDetails = details
                                     val failure =
-                                        "آزمایش اتصال ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                        "آزمایش اتصال ناموفق بود. جزئیات خطا ذخیره شد و قابل کپی است."
                                     status = failure
                                     aiConnectionStatus = failure
                                     rootView.announceForAccessibility(failure)
@@ -659,6 +668,27 @@ private fun DidyarScreen() {
                             liveRegion = LiveRegionMode.Assertive
                         }
                     )
+
+                    if (connectionErrorDetails.isNotBlank()) {
+                        Button(
+                            onClick = {
+                                val clipboard =
+                                    context.getSystemService(ClipboardManager::class.java)
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText(
+                                        "Didyar connection error",
+                                        connectionErrorDetails
+                                    )
+                                )
+                                val message = "خطای آزمایش اتصال کپی شد."
+                                status = message
+                                rootView.announceForAccessibility(message)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("کپی خطای آزمایش اتصال")
+                        }
+                    }
 
                     Button(
                         onClick = {
