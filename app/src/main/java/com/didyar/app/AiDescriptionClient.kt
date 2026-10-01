@@ -18,6 +18,7 @@ object AvalAiVisionProvider {
 
     private class HttpStatusException(
         val statusCode: Int,
+        val retryAfterSeconds: Long?,
         message: String
     ) : IllegalStateException(message)
 
@@ -146,13 +147,21 @@ object AvalAiVisionProvider {
                 }
             } catch (e: HttpStatusException) {
                 val transient = e.statusCode == 429 || e.statusCode in 500..599
-                if (!transient || transientAttempts >= 2) throw e
+                val maxAttempts = if (e.statusCode == 429) 4 else 2
+                if (!transient || transientAttempts >= maxAttempts) throw e
 
                 val waitMs = if (e.statusCode == 429) {
-                    4_000L * (transientAttempts + 1)
+                    val serverWait = e.retryAfterSeconds?.times(1_000L)
+                    serverWait ?: when (transientAttempts) {
+                        0 -> 30_000L
+                        1 -> 60_000L
+                        2 -> 90_000L
+                        else -> 120_000L
+                    }
                 } else {
-                    2_000L * (transientAttempts + 1)
+                    3_000L * (transientAttempts + 1)
                 }
+
                 transientAttempts += 1
                 Thread.sleep(waitMs)
             }
@@ -193,8 +202,14 @@ object AvalAiVisionProvider {
                     }
                 }.getOrNull().orEmpty()
 
+                val retryAfterSeconds =
+                    connection.getHeaderField("Retry-After")
+                        ?.trim()
+                        ?.toLongOrNull()
+
                 throw HttpStatusException(
                     statusCode = status,
+                    retryAfterSeconds = retryAfterSeconds,
                     message = if (message.isNotBlank()) {
                         "AvalAI خطای $status: $message"
                     } else {
