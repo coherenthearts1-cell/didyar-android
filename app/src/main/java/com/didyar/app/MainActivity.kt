@@ -100,6 +100,33 @@ private fun DidyarScreen() {
     var showAiSettings by remember { mutableStateOf(apiKey.isBlank()) }
     var aiBusy by remember { mutableStateOf(false) }
     var aiConnectionStatus by remember { mutableStateOf("وضعیت اتصال: هنوز آزمایش نشده است.") }
+    var batchBusy by remember { mutableStateOf(false) }
+    var batchProgress by remember { mutableIntStateOf(0) }
+    var batchTotal by remember { mutableIntStateOf(0) }
+    var batchCancelRequested by remember { mutableStateOf(false) }
+    var autoNarrationEnabled by remember { mutableStateOf(false) }
+    var narrationInProgress by remember { mutableStateOf(false) }
+    var lastNarratedSceneIndex by remember { mutableIntStateOf(-1) }
+
+    fun estimatedNarrationDurationMs(text: String): Long {
+        val wordCount = text.trim()
+            .split(Regex("\\s+"))
+            .count { it.isNotBlank() }
+            .coerceAtLeast(1)
+        return (1_000L + wordCount * 350L).coerceIn(2_500L, 22_000L)
+    }
+
+    fun readDescriptionNow(text: String) {
+        val talkBackLikeReaderActive =
+            accessibilityManager?.isEnabled == true &&
+            accessibilityManager.isTouchExplorationEnabled
+
+        if (talkBackLikeReaderActive) {
+            rootView.announceForAccessibility(text)
+        } else {
+            tts.speak(text)
+        }
+    }
 
     fun selectScene(index: Int) {
         if (index !in scenes.indices) return
@@ -126,6 +153,9 @@ private fun DidyarScreen() {
             scenes.clear()
             selectedSceneIndex = -1
             descriptionDraft = ""
+            autoNarrationEnabled = false
+            narrationInProgress = false
+            lastNarratedSceneIndex = -1
             status = "فیلم انتخاب شد. در حال خواندن مشخصات."
 
             scope.launch {
@@ -151,9 +181,42 @@ private fun DidyarScreen() {
 
     LaunchedEffect(Unit) {
         while (true) {
-            playerPosition = player.currentPosition.coerceAtLeast(0L)
+            val currentPosition = player.currentPosition.coerceAtLeast(0L)
+            playerPosition = currentPosition
             isPlaying = player.isPlaying
-            delay(500)
+
+            if (
+                autoNarrationEnabled &&
+                player.isPlaying &&
+                !narrationInProgress &&
+                scenes.isNotEmpty()
+            ) {
+                val currentSceneIndex = scenes.indexOfLast { it.timeMs <= currentPosition }
+                if (
+                    currentSceneIndex >= 0 &&
+                    currentSceneIndex != lastNarratedSceneIndex
+                ) {
+                    lastNarratedSceneIndex = currentSceneIndex
+                    val scene = scenes[currentSceneIndex]
+                    val description = scene.description.trim()
+
+                    if (description.isNotBlank()) {
+                        narrationInProgress = true
+                        player.pause()
+                        status = "در حال خواندن توضیح صحنه ${scene.index}."
+                        readDescriptionNow(description)
+                        delay(estimatedNarrationDurationMs(description))
+
+                        narrationInProgress = false
+                        if (autoNarrationEnabled) {
+                            player.play()
+                            status = "پخش فیلم ادامه یافت."
+                        }
+                    }
+                }
+            }
+
+            delay(250)
         }
     }
 
@@ -179,7 +242,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۳٫۳",
+            text = "دیدیار ۰٫۴",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -398,6 +461,187 @@ private fun DidyarScreen() {
                 style = MaterialTheme.typography.titleMedium
             )
 
+            val pendingDescriptions = scenes.count { it.description.isBlank() }
+            val readyDescriptions = scenes.size - pendingDescriptions
+
+            Text("توضیح آماده: $readyDescriptions از ${scenes.size} صحنه")
+
+            if (!batchBusy) {
+                Button(
+                    onClick = {
+                        val uri = selectedUri ?: return@Button
+                        val key = apiKey.trim()
+                        if (key.isBlank()) return@Button
+
+                        val pendingIndices = scenes.indices.filter {
+                            scenes[it].description.isBlank()
+                        }
+                        if (pendingIndices.isEmpty()) {
+                            val message = "همهٔ صحنه‌ها از قبل توضیح دارند."
+                            status = message
+                            rootView.announceForAccessibility(message)
+                            return@Button
+                        }
+
+                        player.pause()
+                        autoNarrationEnabled = false
+                        batchBusy = true
+                        aiBusy = true
+                        batchCancelRequested = false
+                        batchProgress = 0
+                        batchTotal = pendingIndices.size
+
+                        val startMessage =
+                            "ساخت توضیح برای ${pendingIndices.size} صحنه آغاز شد."
+                        status = startMessage
+                        rootView.announceForAccessibility(startMessage)
+
+                        scope.launch {
+                            try {
+                                for ((position, sceneIndex) in pendingIndices.withIndex()) {
+                                    if (batchCancelRequested) break
+
+                                    val scene = scenes[sceneIndex]
+                                    val nextSceneStart =
+                                        scenes.getOrNull(sceneIndex + 1)?.timeMs ?: durationMs
+
+                                    status =
+                                        "در حال ساخت توضیح صحنه ${scene.index}؛ " +
+                                            "مورد ${position + 1} از ${pendingIndices.size}."
+
+                                    val description = withContext(Dispatchers.IO) {
+                                        val frames = SceneFrameExtractor.extractBase64Jpegs(
+                                            context = context,
+                                            uri = uri,
+                                            startMs = scene.timeMs,
+                                            endMs = nextSceneStart
+                                        )
+                                        AvalAiVisionProvider.describeScene(
+                                            apiKey = key,
+                                            framesBase64 = frames,
+                                            sceneIndex = scene.index,
+                                            sceneTotal = scenes.size,
+                                            timecode = formatTime(scene.timeMs)
+                                        )
+                                    }
+
+                                    if (sceneIndex in scenes.indices) {
+                                        scenes[sceneIndex] =
+                                            scenes[sceneIndex].copy(description = description)
+                                        if (sceneIndex == selectedSceneIndex) {
+                                            descriptionDraft = description
+                                        }
+                                    }
+
+                                    batchProgress = position + 1
+                                    rootView.announceForAccessibility(
+                                        "توضیح ${position + 1} از ${pendingIndices.size} آماده شد."
+                                    )
+                                }
+
+                                val finalMessage = if (batchCancelRequested) {
+                                    "ساخت توضیحات متوقف شد. " +
+                                        "$batchProgress از $batchTotal صحنه آماده شد."
+                                } else {
+                                    "ساخت توضیحات تمام شد. " +
+                                        "$batchProgress صحنه توضیح‌دار شد."
+                                }
+                                status = finalMessage
+                                rootView.announceForAccessibility(finalMessage)
+                            } catch (e: Exception) {
+                                val failure =
+                                    "ساخت توضیحات متوقف شد: " +
+                                        (e.message ?: "خطای نامشخص")
+                                status = failure
+                                rootView.announceForAccessibility(failure)
+                            } finally {
+                                batchBusy = false
+                                aiBusy = false
+                            }
+                        }
+                    },
+                    enabled =
+                        selectedUri != null &&
+                            apiKey.isNotBlank() &&
+                            !aiBusy &&
+                            pendingDescriptions > 0,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (pendingDescriptions > 0) {
+                            "ساخت توضیح برای همهٔ صحنه‌ها؛ $pendingDescriptions درخواست"
+                        } else {
+                            "همهٔ صحنه‌ها توضیح دارند"
+                        }
+                    )
+                }
+            } else {
+                Text(
+                    text = "پیشرفت ساخت توضیحات: $batchProgress از $batchTotal",
+                    modifier = Modifier.semantics {
+                        liveRegion = LiveRegionMode.Polite
+                    }
+                )
+
+                Button(
+                    onClick = {
+                        batchCancelRequested = true
+                        val message = "پس از پایان صحنهٔ جاری، ساخت توضیحات متوقف می‌شود."
+                        status = message
+                        rootView.announceForAccessibility(message)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("توقف پس از صحنهٔ جاری")
+                }
+            }
+
+            Button(
+                onClick = {
+                    autoNarrationEnabled = !autoNarrationEnabled
+                    lastNarratedSceneIndex = -1
+                    narrationInProgress = false
+
+                    val message = if (autoNarrationEnabled) {
+                        "توضیح هنگام پخش روشن شد. فیلم هنگام خواندن توضیح موقتاً مکث می‌کند."
+                    } else {
+                        "توضیح هنگام پخش خاموش شد."
+                    }
+                    status = message
+                    rootView.announceForAccessibility(message)
+                },
+                enabled = readyDescriptions > 0 && !aiBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (autoNarrationEnabled) {
+                        "توضیح هنگام پخش: روشن"
+                    } else {
+                        "توضیح هنگام پخش: خاموش"
+                    }
+                )
+            }
+
+            Button(
+                onClick = {
+                    player.pause()
+                    player.seekTo(0L)
+                    lastNarratedSceneIndex = -1
+                    narrationInProgress = false
+                    autoNarrationEnabled = true
+                    status = "پخش توضیح‌دار از ابتدا آغاز شد."
+                    player.play()
+                },
+                enabled = readyDescriptions > 0 && !aiBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("پخش توضیح‌دار از ابتدا")
+            }
+
+            Text(
+                "در این نسخهٔ آزمایشی، فیلم هنگام خواندن هر توضیح موقتاً مکث می‌کند و سپس ادامه می‌یابد."
+            )
+
             val currentScene = scenes[selectedSceneIndex.coerceIn(0, scenes.lastIndex)]
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -528,20 +772,8 @@ private fun DidyarScreen() {
                                 return@Button
                             }
 
-                            val talkBackLikeReaderActive =
-                                accessibilityManager?.isEnabled == true &&
-                                accessibilityManager.isTouchExplorationEnabled
-
-                            if (talkBackLikeReaderActive) {
-                                rootView.announceForAccessibility(text)
-                                status = "توضیح برای خواندن به صفحه‌خوان ارسال شد."
-                            } else {
-                                status = if (tts.speak(text)) {
-                                    "توضیح با صدای گوشی پخش شد."
-                                } else {
-                                    "موتور گفتار گوشی آماده نیست."
-                                }
-                            }
+                            readDescriptionNow(text)
+                            status = "توضیح برای خواندن ارسال شد."
                         },
                         enabled = descriptionDraft.isNotBlank() && !aiBusy,
                         modifier = Modifier.fillMaxWidth()
