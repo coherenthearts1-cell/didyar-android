@@ -120,8 +120,13 @@ private fun DidyarScreen() {
     }
     var descriptionFieldFocused by remember { mutableStateOf(false) }
 
+    var selectedProvider by remember {
+        mutableStateOf(AiProviderStore.load(context))
+    }
     var apiKey by remember {
-        mutableStateOf(SecureSecretStore.load(context, "avalai_api_key").orEmpty())
+        mutableStateOf(
+            SecureSecretStore.load(context, selectedProvider.secretName).orEmpty()
+        )
     }
     var showAiSettings by remember { mutableStateOf(apiKey.isBlank()) }
     var aiBusy by remember { mutableStateOf(false) }
@@ -356,7 +361,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۵٫۶",
+            text = "دیدیار ۰٫۶٫۰",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -498,15 +503,73 @@ private fun DidyarScreen() {
                         style = MaterialTheme.typography.titleMedium
                     )
 
-                    Text("AvalAI — مدل Gemini 3.8 Flash")
+                    Text("ارائه‌دهندهٔ فعال: ${selectedProvider.displayName}")
+                    Text("مدل: Gemini 3.8 Flash")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                selectedProvider = AiProvider.AVALAI
+                                AiProviderStore.save(context, selectedProvider)
+                                apiKey = SecureSecretStore
+                                    .load(context, selectedProvider.secretName)
+                                    .orEmpty()
+                                aiConnectionStatus =
+                                    "وضعیت اتصال: هنوز برای AvalAI آزمایش نشده است."
+                                val message = "AvalAI به‌عنوان ارائه‌دهنده انتخاب شد."
+                                status = message
+                                rootView.announceForAccessibility(message)
+                            },
+                            enabled = !aiBusy,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                if (selectedProvider == AiProvider.AVALAI) {
+                                    "AvalAI؛ انتخاب‌شده"
+                                } else {
+                                    "AvalAI"
+                                }
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                selectedProvider = AiProvider.NETARZ
+                                AiProviderStore.save(context, selectedProvider)
+                                apiKey = SecureSecretStore
+                                    .load(context, selectedProvider.secretName)
+                                    .orEmpty()
+                                aiConnectionStatus =
+                                    "وضعیت اتصال: هنوز برای نِت‌اَرز آزمایش نشده است."
+                                val message = "نِت‌اَرز به‌عنوان ارائه‌دهنده انتخاب شد."
+                                status = message
+                                rootView.announceForAccessibility(message)
+                            },
+                            enabled = !aiBusy,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                if (selectedProvider == AiProvider.NETARZ) {
+                                    "نِت‌اَرز؛ انتخاب‌شده"
+                                } else {
+                                    "نِت‌اَرز"
+                                }
+                            )
+                        }
+                    }
+
                     Text(
-                        "کلید AvalAI داخل فایل برنامه قرار نمی‌گیرد. کلیدی که اینجا وارد می‌کنید با Android Keystore روی همین گوشی رمزگذاری می‌شود."
+                        "کلید ${selectedProvider.displayName} داخل فایل برنامه قرار نمی‌گیرد. " +
+                            "کلیدی که اینجا وارد می‌کنید با Android Keystore روی همین گوشی رمزگذاری می‌شود."
                     )
 
                     OutlinedTextField(
                         value = apiKey,
                         onValueChange = { apiKey = it.trim() },
-                        label = { Text("کلید API AvalAI") },
+                        label = { Text("کلید API ${selectedProvider.displayName}") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -515,8 +578,14 @@ private fun DidyarScreen() {
 
                     Button(
                         onClick = {
-                            SecureSecretStore.save(context, "avalai_api_key", apiKey.trim())
-                            val message = "کلید AvalAI با موفقیت ذخیره شد."
+                            AiProviderStore.save(context, selectedProvider)
+                            SecureSecretStore.save(
+                                context,
+                                selectedProvider.secretName,
+                                apiKey.trim()
+                            )
+                            val message =
+                                "کلید ${selectedProvider.displayName} با موفقیت ذخیره شد."
                             status = message
                             rootView.announceForAccessibility(message)
                         },
@@ -530,23 +599,36 @@ private fun DidyarScreen() {
                         onClick = {
                             val key = apiKey.trim()
                             if (key.isBlank()) return@Button
+                            val providerForTest = selectedProvider
                             aiBusy = true
-                            val starting = "در حال آزمایش اتصال به AvalAI."
+                            val starting =
+                                "در حال آزمایش اتصال به ${providerForTest.displayName}."
                             status = starting
                             aiConnectionStatus = "وضعیت اتصال: در حال آزمایش..."
                             rootView.announceForAccessibility(starting)
                             scope.launch {
                                 try {
                                     withContext(Dispatchers.IO) {
-                                        AvalAiVisionProvider.testConnection(key)
+                                        AvalAiVisionProvider.testConnection(
+                                            apiKey = key,
+                                            provider = providerForTest
+                                        )
                                     }
-                                    SecureSecretStore.save(context, "avalai_api_key", key)
-                                    val success = "اتصال به AvalAI برقرار شد و کلید معتبر است."
+                                    AiProviderStore.save(context, providerForTest)
+                                    SecureSecretStore.save(
+                                        context,
+                                        providerForTest.secretName,
+                                        key
+                                    )
+                                    val success =
+                                        "اتصال به ${providerForTest.displayName} برقرار شد و کلید معتبر است."
                                     status = success
-                                    aiConnectionStatus = "وضعیت اتصال: برقرار شد. کلید معتبر است."
+                                    aiConnectionStatus =
+                                        "وضعیت اتصال: برقرار شد. کلید معتبر است."
                                     rootView.announceForAccessibility(success)
                                 } catch (e: Exception) {
-                                    val failure = "آزمایش اتصال ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                    val failure =
+                                        "آزمایش اتصال ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                                     status = failure
                                     aiConnectionStatus = failure
                                     rootView.announceForAccessibility(failure)
@@ -558,7 +640,13 @@ private fun DidyarScreen() {
                         enabled = apiKey.isNotBlank() && !aiBusy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (aiBusy) "در حال آزمایش..." else "آزمایش اتصال AvalAI")
+                        Text(
+                            if (aiBusy) {
+                                "در حال آزمایش..."
+                            } else {
+                                "آزمایش اتصال ${selectedProvider.displayName}"
+                            }
+                        )
                     }
 
                     Text(
@@ -570,10 +658,14 @@ private fun DidyarScreen() {
 
                     Button(
                         onClick = {
-                            SecureSecretStore.clear(context, "avalai_api_key")
+                            SecureSecretStore.clear(
+                                context,
+                                selectedProvider.secretName
+                            )
                             apiKey = ""
                             aiConnectionStatus = "وضعیت اتصال: کلید پاک شده است."
-                            val message = "کلید AvalAI از گوشی پاک شد."
+                            val message =
+                                "کلید ${selectedProvider.displayName} از گوشی پاک شد."
                             status = message
                             rootView.announceForAccessibility(message)
                         },
@@ -888,7 +980,8 @@ private fun DidyarScreen() {
                                             framesBase64 = frames,
                                             sceneIndex = scene.index,
                                             sceneTotal = scenes.size,
-                                            timecode = formatTime(scene.timeMs)
+                                            timecode = formatTime(scene.timeMs),
+                                            provider = selectedProvider
                                         )
                                     }
 
@@ -915,7 +1008,10 @@ private fun DidyarScreen() {
                     }
 
                     if (apiKey.isBlank()) {
-                        Text("برای فعال شدن توضیح خودکار، ابتدا در تنظیمات هوش مصنوعی کلید AvalAI را وارد کنید.")
+                        Text(
+                            "برای فعال شدن توضیح خودکار، ابتدا در تنظیمات هوش مصنوعی " +
+                                "کلید ${selectedProvider.displayName} را وارد کنید."
+                        )
                     }
 
                     OutlinedTextField(
