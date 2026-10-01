@@ -57,7 +57,7 @@ object ProjectStore {
             val root = JSONObject(raw)
             val uriText = root.getString("uri")
             val scenesJson = root.optJSONArray("scenes") ?: JSONArray()
-            val scenes = buildList {
+            val rawScenes = buildList {
                 for (i in 0 until scenesJson.length()) {
                     val item = scenesJson.getJSONObject(i)
                     add(
@@ -69,6 +69,14 @@ object ProjectStore {
                     )
                 }
             }
+
+            val scenes = rawScenes
+                .filterNot {
+                    it.description == AvalAiVisionProvider.NO_NEW_VISUAL_MARKER
+                }
+                .mapIndexed { index, scene ->
+                    scene.copy(index = index + 1)
+                }
 
             SavedDidyarProject(
                 uri = Uri.parse(uriText),
