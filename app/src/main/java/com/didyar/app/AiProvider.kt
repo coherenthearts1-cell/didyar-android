@@ -7,7 +7,8 @@ enum class AiProvider(
     val displayName: String,
     val secretName: String,
     val modelId: String,
-    val endpoints: List<String>
+    val endpoints: List<String>,
+    val accountEndpoint: String? = null
 ) {
     AVALAI(
         id = "avalai",
@@ -18,7 +19,8 @@ enum class AiProvider(
             "https://api.avalai.ir/v1/chat/completions",
             "https://api.avalapis.ir/v1/chat/completions",
             "https://api.avalai.org/v1/chat/completions"
-        )
+        ),
+        accountEndpoint = null
     ),
     NETARZ(
         id = "netarz",
@@ -27,7 +29,8 @@ enum class AiProvider(
         modelId = "gemini-3.8-flash",
         endpoints = listOf(
             "https://netarz.ir/api/ai/v1/chat/completions"
-        )
+        ),
+        accountEndpoint = "https://netarz.ir/api/ai/v1/me"
     );
 
     companion object {
