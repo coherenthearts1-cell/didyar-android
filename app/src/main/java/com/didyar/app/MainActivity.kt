@@ -361,7 +361,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۶٫۰",
+            text = "دیدیار ۰٫۶٫۱",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -608,11 +608,15 @@ private fun DidyarScreen() {
                             rootView.announceForAccessibility(starting)
                             scope.launch {
                                 try {
-                                    withContext(Dispatchers.IO) {
-                                        AvalAiVisionProvider.testConnection(
-                                            apiKey = key,
-                                            provider = providerForTest
-                                        )
+                                    val connectionDetails = withContext(Dispatchers.IO) {
+                                        if (providerForTest == AiProvider.NETARZ) {
+                                            NetarzAccountClient.testConnection(key)
+                                        } else {
+                                            AvalAiVisionProvider.testConnection(
+                                                apiKey = key,
+                                                provider = providerForTest
+                                            )
+                                        }
                                     }
                                     AiProviderStore.save(context, providerForTest)
                                     SecureSecretStore.save(
@@ -621,10 +625,10 @@ private fun DidyarScreen() {
                                         key
                                     )
                                     val success =
-                                        "اتصال به ${providerForTest.displayName} برقرار شد و کلید معتبر است."
+                                        "اتصال به ${providerForTest.displayName} برقرار شد. $connectionDetails"
                                     status = success
                                     aiConnectionStatus =
-                                        "وضعیت اتصال: برقرار شد. کلید معتبر است."
+                                        "وضعیت اتصال: $connectionDetails"
                                     rootView.announceForAccessibility(success)
                                 } catch (e: Exception) {
                                     val failure =
