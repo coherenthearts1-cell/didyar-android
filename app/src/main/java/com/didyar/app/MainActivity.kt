@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -82,19 +83,39 @@ private fun DidyarScreen() {
     val player = remember { ExoPlayer.Builder(context).build() }
     val tts = remember { PersianTts(context) }
     val scrollState = rememberScrollState()
+    val restoredProject = remember { ProjectStore.load(context) }
 
-    var selectedUri by remember { mutableStateOf<Uri?>(null) }
-    var fileName by remember { mutableStateOf("هنوز فیلمی انتخاب نشده است") }
-    var durationMs by remember { mutableLongStateOf(0L) }
+    var selectedUri by remember { mutableStateOf(restoredProject?.uri) }
+    var fileName by remember {
+        mutableStateOf(restoredProject?.fileName ?: "هنوز فیلمی انتخاب نشده است")
+    }
+    var durationMs by remember { mutableLongStateOf(restoredProject?.durationMs ?: 0L) }
     var playerPosition by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
     var analyzing by remember { mutableStateOf(false) }
     var analysisProgress by remember { mutableIntStateOf(0) }
-    var status by remember { mutableStateOf("دیدیار آماده است.") }
+    var status by remember {
+        mutableStateOf(
+            if (restoredProject != null) {
+                "پروژهٔ ذخیره‌شده بازیابی شد."
+            } else {
+                "دیدیار آماده است."
+            }
+        )
+    }
 
-    val scenes = remember { mutableStateListOf<ScenePoint>() }
-    var selectedSceneIndex by remember { mutableIntStateOf(-1) }
-    var descriptionDraft by remember { mutableStateOf("") }
+    val scenes = remember {
+        mutableStateListOf<ScenePoint>().apply {
+            addAll(restoredProject?.scenes.orEmpty())
+        }
+    }
+    var selectedSceneIndex by remember {
+        mutableIntStateOf(if (scenes.isNotEmpty()) 0 else -1)
+    }
+    var descriptionDraft by remember {
+        mutableStateOf(scenes.firstOrNull()?.description.orEmpty())
+    }
+    var descriptionFieldFocused by remember { mutableStateOf(false) }
 
     var apiKey by remember {
         mutableStateOf(SecureSecretStore.load(context, "avalai_api_key").orEmpty())
@@ -110,6 +131,17 @@ private fun DidyarScreen() {
     var autoNarrationEnabled by remember { mutableStateOf(false) }
     var narrationInProgress by remember { mutableStateOf(false) }
     var lastNarratedSceneIndex by remember { mutableIntStateOf(-1) }
+
+    fun persistProject() {
+        val uri = selectedUri ?: return
+        ProjectStore.save(
+            context = context,
+            uri = uri,
+            fileName = fileName,
+            durationMs = durationMs,
+            scenes = scenes.toList()
+        )
+    }
 
     fun estimatedNarrationDurationMs(text: String): Long {
         val wordCount = text.trim()
