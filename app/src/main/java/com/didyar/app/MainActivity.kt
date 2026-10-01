@@ -1,5 +1,7 @@
 package com.didyar.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -104,6 +106,7 @@ private fun DidyarScreen() {
     var batchProgress by remember { mutableIntStateOf(0) }
     var batchTotal by remember { mutableIntStateOf(0) }
     var batchCancelRequested by remember { mutableStateOf(false) }
+    var lastErrorDetails by remember { mutableStateOf("") }
     var autoNarrationEnabled by remember { mutableStateOf(false) }
     var narrationInProgress by remember { mutableStateOf(false) }
     var lastNarratedSceneIndex by remember { mutableIntStateOf(-1) }
@@ -242,7 +245,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۴",
+            text = "دیدیار ۰٫۴٫۱",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -498,6 +501,7 @@ private fun DidyarScreen() {
 
                         scope.launch {
                             try {
+                                lastErrorDetails = ""
                                 for ((position, sceneIndex) in pendingIndices.withIndex()) {
                                     if (batchCancelRequested) break
 
@@ -509,20 +513,30 @@ private fun DidyarScreen() {
                                         "در حال ساخت توضیح صحنه ${scene.index}؛ " +
                                             "مورد ${position + 1} از ${pendingIndices.size}."
 
-                                    val description = withContext(Dispatchers.IO) {
-                                        val frames = SceneFrameExtractor.extractBase64Jpegs(
-                                            context = context,
-                                            uri = uri,
-                                            startMs = scene.timeMs,
-                                            endMs = nextSceneStart
-                                        )
-                                        AvalAiVisionProvider.describeScene(
-                                            apiKey = key,
-                                            framesBase64 = frames,
-                                            sceneIndex = scene.index,
-                                            sceneTotal = scenes.size,
-                                            timecode = formatTime(scene.timeMs)
-                                        )
+                                    val description = try {
+                                        withContext(Dispatchers.IO) {
+                                            val frames = SceneFrameExtractor.extractBase64Jpegs(
+                                                context = context,
+                                                uri = uri,
+                                                startMs = scene.timeMs,
+                                                endMs = nextSceneStart
+                                            )
+                                            AvalAiVisionProvider.describeScene(
+                                                apiKey = key,
+                                                framesBase64 = frames,
+                                                sceneIndex = scene.index,
+                                                sceneTotal = scenes.size,
+                                                timecode = formatTime(scene.timeMs)
+                                            )
+                                        }
+                                    } catch (e: Exception) {
+                                        lastErrorDetails =
+                                            "نسخه دیدیار: ۰٫۴٫۱\n" +
+                                                "صحنه: ${scene.index} از ${scenes.size}\n" +
+                                                "زمان: ${formatTime(scene.timeMs)}\n" +
+                                                "نوع خطا: ${e::class.java.simpleName}\n" +
+                                                "پیام: ${e.message ?: "خطای نامشخص"}"
+                                        throw e
                                     }
 
                                     if (sceneIndex in scenes.indices) {
@@ -537,6 +551,10 @@ private fun DidyarScreen() {
                                     rootView.announceForAccessibility(
                                         "توضیح ${position + 1} از ${pendingIndices.size} آماده شد."
                                     )
+
+                                    if (position < pendingIndices.lastIndex) {
+                                        delay(1_500)
+                                    }
                                 }
 
                                 val finalMessage = if (batchCancelRequested) {
@@ -549,9 +567,14 @@ private fun DidyarScreen() {
                                 status = finalMessage
                                 rootView.announceForAccessibility(finalMessage)
                             } catch (e: Exception) {
+                                if (lastErrorDetails.isBlank()) {
+                                    lastErrorDetails =
+                                        "نسخه دیدیار: ۰٫۴٫۱\n" +
+                                            "نوع خطا: ${e::class.java.simpleName}\n" +
+                                            "پیام: ${e.message ?: "خطای نامشخص"}"
+                                }
                                 val failure =
-                                    "ساخت توضیحات متوقف شد: " +
-                                        (e.message ?: "خطای نامشخص")
+                                    "ساخت توضیحات متوقف شد. جزئیات خطا پایین صفحه ذخیره شد."
                                 status = failure
                                 rootView.announceForAccessibility(failure)
                             } finally {
@@ -641,6 +664,39 @@ private fun DidyarScreen() {
             Text(
                 "در این نسخهٔ آزمایشی، فیلم هنگام خواندن هر توضیح موقتاً مکث می‌کند و سپس ادامه می‌یابد."
             )
+
+            if (lastErrorDetails.isNotBlank()) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "آخرین خطا",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(lastErrorDetails)
+                        Button(
+                            onClick = {
+                                val clipboard =
+                                    context.getSystemService(ClipboardManager::class.java)
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText(
+                                        "Didyar error",
+                                        lastErrorDetails
+                                    )
+                                )
+                                val message = "جزئیات آخرین خطا کپی شد."
+                                status = message
+                                rootView.announceForAccessibility(message)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("کپی آخرین خطا")
+                        }
+                    }
+                }
+            }
 
             val currentScene = scenes[selectedSceneIndex.coerceIn(0, scenes.lastIndex)]
 
