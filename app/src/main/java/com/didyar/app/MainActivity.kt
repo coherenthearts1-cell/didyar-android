@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -72,6 +73,9 @@ class MainActivity : ComponentActivity() {
 private fun DidyarScreen() {
     val context = LocalContext.current
     val rootView = LocalView.current
+    val accessibilityManager = remember {
+        context.getSystemService(AccessibilityManager::class.java)
+    }
     val scope = rememberCoroutineScope()
     val player = remember { ExoPlayer.Builder(context).build() }
     val tts = remember { PersianTts(context) }
@@ -175,7 +179,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۳٫۲",
+            text = "دیدیار ۰٫۳٫۳",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -519,10 +523,24 @@ private fun DidyarScreen() {
                     Button(
                         onClick = {
                             val text = descriptionDraft.trim()
-                            status = if (tts.speak(text)) {
-                                "توضیح با صدای گوشی پخش شد."
+                            if (text.isBlank()) {
+                                status = "توضیحی برای خواندن وجود ندارد."
+                                return@Button
+                            }
+
+                            val talkBackLikeReaderActive =
+                                accessibilityManager?.isEnabled == true &&
+                                accessibilityManager.isTouchExplorationEnabled
+
+                            if (talkBackLikeReaderActive) {
+                                rootView.announceForAccessibility(text)
+                                status = "توضیح برای خواندن به صفحه‌خوان ارسال شد."
                             } else {
-                                "برای پخش، ابتدا یک توضیح بنویسید یا موتور گفتار گوشی هنوز آماده نیست."
+                                status = if (tts.speak(text)) {
+                                    "توضیح با صدای گوشی پخش شد."
+                                } else {
+                                    "موتور گفتار گوشی آماده نیست."
+                                }
                             }
                         },
                         enabled = descriptionDraft.isNotBlank() && !aiBusy,
