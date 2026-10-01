@@ -134,6 +134,7 @@ private fun DidyarScreen() {
     var autoNarrationEnabled by remember { mutableStateOf(false) }
     var narrationInProgress by remember { mutableStateOf(false) }
     var lastNarratedSceneIndex by remember { mutableIntStateOf(-1) }
+    var showAllDescriptions by remember { mutableStateOf(false) }
 
     fun persistProject() {
         val uri = selectedUri ?: return
@@ -172,6 +173,15 @@ private fun DidyarScreen() {
         val scene = scenes[index]
         descriptionDraft = scene.description
         status = "صحنه ${scene.index} از ${scenes.size} انتخاب شد؛ زمان ${formatTime(scene.timeMs)}."
+    }
+
+    fun allDescriptionsText(): String {
+        return scenes.joinToString(separator = "\n\n") { scene ->
+            val description = scene.description.trim().ifBlank {
+                "هنوز توضیحی برای این صحنه آماده نشده است."
+            }
+            "صحنه ${scene.index}، زمان ${formatTime(scene.timeMs)}\n$description"
+        }
     }
 
     val openDocument = rememberLauncherForActivityResult(
@@ -346,7 +356,7 @@ private fun DidyarScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "دیدیار ۰٫۵٫۳",
+            text = "دیدیار ۰٫۵٫۴",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -713,6 +723,65 @@ private fun DidyarScreen() {
             Text(
                 "در این نسخهٔ آزمایشی، فیلم هنگام خواندن هر توضیح موقتاً مکث می‌کند و سپس ادامه می‌یابد."
             )
+
+            Button(
+                onClick = { showAllDescriptions = !showAllDescriptions },
+                enabled = scenes.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (showAllDescriptions) {
+                        "بستن مرور همهٔ توضیحات"
+                    } else {
+                        "مرور همهٔ توضیحات"
+                    }
+                )
+            }
+
+            if (showAllDescriptions) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "مرور تجمیعی توضیحات",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
+                        scenes.forEach { scene ->
+                            Text(
+                                "صحنه ${scene.index}، زمان ${formatTime(scene.timeMs)}",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                scene.description.trim().ifBlank {
+                                    "هنوز توضیحی برای این صحنه آماده نشده است."
+                                }
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                val clipboard =
+                                    context.getSystemService(ClipboardManager::class.java)
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText(
+                                        "Didyar all descriptions",
+                                        allDescriptionsText()
+                                    )
+                                )
+                                val message = "همهٔ توضیحات کپی شد."
+                                status = message
+                                rootView.announceForAccessibility(message)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("کپی همهٔ توضیحات")
+                        }
+                    }
+                }
+            }
 
             if (lastErrorDetails.isNotBlank()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
